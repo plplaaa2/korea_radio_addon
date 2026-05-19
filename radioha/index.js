@@ -347,32 +347,41 @@ async function getHostIP() {
  * 3. HTTP 서버 설정
  */
 const liveServer = http.createServer((req, resp) => {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
-        const baseURL = `http://${req.headers.host || 'localhost'}`;
-        const myUrl = new URL(req.url, baseURL);
-        const urlParams = myUrl.searchParams;
-        const urlPath = myUrl.pathname;
+    if (req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+            handleRequest(req, resp, body);
+        });
+    } else {
+        handleRequest(req, resp, '');
+    }
+});
 
-        // [보안] 1. IP 추출 및 임시 차단(Ban) 확인
-        const clientIP = getClientIP(req);
-        const banInfo = checkIPBan(clientIP);
-        if (banInfo.isBanned) {
-            resp.statusCode = 429;
-            resp.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            return resp.end(`Too Many Requests: 인증 실패 누적으로 인해 임시 차단된 IP입니다. (${banInfo.remaining}초 후 재시도)`);
-        }
+async function handleRequest(req, resp, body) {
+    const baseURL = `http://${req.headers.host || 'localhost'}`;
+    const myUrl = new URL(req.url, baseURL);
+    const urlParams = myUrl.searchParams;
+    const urlPath = myUrl.pathname;
 
-        const isLocal = isLocalRequest(req);
+    // [보안] 1. IP 추출 및 임시 차단(Ban) 확인
+    const clientIP = getClientIP(req);
+    const banInfo = checkIPBan(clientIP);
+    if (banInfo.isBanned) {
+        resp.statusCode = 429;
+        resp.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        return resp.end(`Too Many Requests: 인증 실패 누적으로 인해 임시 차단된 IP입니다. (${banInfo.remaining}초 후 재시도)`);
+    }
 
-        // POST 바디 파싱
-        let postData = {};
-        if (req.method === 'POST' && body) {
-            try { postData = JSON.parse(body); } catch (e) { console.error("[API] Body Parse Error"); }
-        }
+    const isLocal = isLocalRequest(req);
 
-        const getParam = (name) => postData[name] || urlParams.get(name);
+    // POST 바디 파싱
+    let postData = {};
+    if (req.method === 'POST' && body) {
+        try { postData = JSON.parse(body); } catch (e) { console.error("[API] Body Parse Error"); }
+    }
+
+    const getParam = (name) => postData[name] || urlParams.get(name);
         const token = getParam('token');
         const isAuthorized = token === mytoken;
 
@@ -583,8 +592,7 @@ const liveServer = http.createServer((req, resp) => {
                 resp.end("Not Found");
             }
         }
-    });
-});
+}
 
 liveServer.listen(port, '0.0.0.0', () => {
     console.log(`Server running at http://0.0.0.0:${port}`);
