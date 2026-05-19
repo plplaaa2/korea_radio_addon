@@ -1,0 +1,7 @@
+# Local dev metadata
+changelog.jsonl
+caution.jsonl
+
+# Backups and temporary files
+*_backup/
+*backup*

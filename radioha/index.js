@@ -91,12 +91,77 @@ function escapeHtml(str) {
     });
 }
 
-function isLocalRequest(req) {
-    let clientIP = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    if (clientIP.includes(',')) clientIP = clientIP.split(',')[0].trim();
+// [보안] IP별 인증 실패 횟수 및 임시 차단(Ban) 상태 관리 객체
+const authFailures = {};
 
-    // IPv6 -> IPv4 변환 (::ffff:192.168.1.1 -> 192.168.1.1)
-    if (clientIP.startsWith('::ffff:')) clientIP = clientIP.split('::ffff:')[1];
+function getClientIP(req) {
+    let socketIP = req.socket.remoteAddress;
+    if (socketIP.startsWith('::ffff:')) socketIP = socketIP.split('::ffff:')[1];
+
+    // 직전 연결 소켓이 로컬망(루프백 또는 사설 IP)인지 판별 (신뢰할 수 있는 역프록시인지 확인)
+    const isSocketLocal = socketIP === '127.0.0.1' || socketIP === '::1' ||
+        socketIP.startsWith('192.168.') ||
+        socketIP.startsWith('10.') ||
+        socketIP.startsWith('172.16.') || socketIP.startsWith('172.17.') ||
+        socketIP.startsWith('172.18.') || socketIP.startsWith('172.19.') ||
+        socketIP.startsWith('172.2') || socketIP.startsWith('172.3');
+
+    // 로컬망 프록시를 거쳐온 요청일 때에만 X-Forwarded-For 헤더를 신뢰하여 사용
+    if (isSocketLocal && req.headers['x-forwarded-for']) {
+        let forwarded = req.headers['x-forwarded-for'];
+        if (forwarded.includes(',')) forwarded = forwarded.split(',')[0].trim();
+        if (forwarded.startsWith('::ffff:')) forwarded = forwarded.split('::ffff:')[1];
+        return forwarded;
+    }
+    return socketIP;
+}
+
+function checkIPBan(clientIP) {
+    const record = authFailures[clientIP];
+    if (!record) return { isBanned: false };
+
+    const now = Date.now();
+    if (record.bannedUntil && now < record.bannedUntil) {
+        const remaining = Math.ceil((record.bannedUntil - now) / 1000);
+        return { isBanned: true, remaining };
+    }
+    
+    if (record.bannedUntil && now >= record.bannedUntil) {
+        delete authFailures[clientIP];
+    }
+    return { isBanned: false };
+}
+
+function recordAuthFailure(clientIP) {
+    const now = Date.now();
+    if (!authFailures[clientIP]) {
+        authFailures[clientIP] = { count: 1, lastFailed: now, bannedUntil: 0 };
+        return;
+    }
+
+    const record = authFailures[clientIP];
+    // 1분 이내의 연속된 실패인 경우 카운트 누적
+    if (now - record.lastFailed < 60000) {
+        record.count++;
+        record.lastFailed = now;
+        if (record.count >= 5) {
+            record.bannedUntil = now + 300000; // 5분간 임시 차단
+            console.warn(`[Security Alert] IP ${clientIP}가 인증 실패 5회 초과로 5분간 임시 차단(Ban)되었습니다.`);
+        }
+    } else {
+        record.count = 1;
+        record.lastFailed = now;
+    }
+}
+
+function clearAuthFailures(clientIP) {
+    if (authFailures[clientIP]) {
+        delete authFailures[clientIP];
+    }
+}
+
+function isLocalRequest(req) {
+    const clientIP = getClientIP(req);
 
     const isPrivate = clientIP === '127.0.0.1' || clientIP === '::1' ||
         clientIP.startsWith('192.168.') ||
@@ -274,6 +339,14 @@ const liveServer = http.createServer(async (req, resp) => {
     const urlParams = myUrl.searchParams;
     const urlPath = myUrl.pathname;
 
+    const clientIP = getClientIP(req);
+    const banInfo = checkIPBan(clientIP);
+    if (banInfo.isBanned) {
+        resp.statusCode = 429;
+        resp.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        return resp.end(`Too Many Requests: 인증 실패 누적으로 인해 임시 차단된 IP입니다. (${banInfo.remaining}초 후 재시도)`);
+    }
+
     const isLocal = isLocalRequest(req);
 
     // 보안 헤더는 외부망 접속 시 웹 페이지("/") 요청에만 적용
@@ -284,6 +357,7 @@ const liveServer = http.createServer(async (req, resp) => {
     // 1. 즉시 처리가 필요한 엔드포인트 (스트리밍 및 메인 페이지)
     if (urlPath === "/radio") {
         if (urlParams.get('token') === mytoken) {
+            clearAuthFailures(clientIP); // 인증 성공 시 실패 기록 초기화
             const key = urlParams.get('keys');
             if (!validateParam(key, 'key')) {
                 resp.statusCode = 400;
@@ -307,8 +381,11 @@ const liveServer = http.createServer(async (req, resp) => {
                 resp.end("Not Found");
             }
         } else {
-            resp.statusCode = 403;
-            resp.end("Forbidden");
+            recordAuthFailure(clientIP); // 실패 횟수 기록
+            setTimeout(() => {
+                resp.statusCode = 403;
+                resp.end("Forbidden");
+            }, 1000); // 1초 지연 부여로 Brute-force 공격 속도 지연
         }
         return;
     }
@@ -358,143 +435,128 @@ const liveServer = http.createServer(async (req, resp) => {
         const token = getParam('token');
         const isAuthorized = token === mytoken;
 
-        if (urlPath === "/get_radio_list") {
-            if (isAuthorized) {
-                const currentData = getRadioData();
-                resp.writeHead(200, { 'Content-Type': 'application/json' });
-                resp.end(JSON.stringify(currentData));
-            } else {
-                resp.statusCode = 403;
-                resp.end("Forbidden");
+        // 허용된 API 목록 정의 및 공통 인증 가드 적용 (보안 지연 및 실패 기록 연계)
+        const validApis = ["/get_radio_list", "/get_players", "/play_on_player", "/media_action", "/set_volume", "/mute_volume"];
+        if (validApis.includes(urlPath)) {
+            if (!isAuthorized) {
+                recordAuthFailure(clientIP);
+                return setTimeout(() => {
+                    resp.statusCode = 403;
+                    resp.end("Forbidden");
+                }, 1000); // 1초 지연으로 무차별 대입 공격 차단
             }
+            clearAuthFailures(clientIP); // 인증 통과 시 실패 누적 횟수 초기화
+        }
+
+        if (urlPath === "/get_radio_list") {
+            const currentData = getRadioData();
+            resp.writeHead(200, { 'Content-Type': 'application/json' });
+            resp.end(JSON.stringify(currentData));
             return;
         }
 
         if (urlPath === "/get_players") {
-            if (isAuthorized) {
-                if (!isLocal) {
-                    return resp.end(JSON.stringify([]));
-                }
-                hassInstance.get('/states')
-                    .then(r => {
-                        const players = r.data.filter(s => s.entity_id.startsWith('media_player.'))
-                            .map(s => ({ name: s.attributes.friendly_name || s.entity_id, id: s.entity_id }));
-                        resp.writeHead(200, { 'Content-Type': 'application/json' });
-                        resp.end(JSON.stringify(players));
-                    })
-                    .catch(() => resp.end("[]"));
-            } else {
-                resp.statusCode = 403;
-                resp.end("Forbidden");
+            if (!isLocal) {
+                return resp.end(JSON.stringify([]));
             }
+            hassInstance.get('/states')
+                .then(r => {
+                    const players = r.data.filter(s => s.entity_id.startsWith('media_player.'))
+                        .map(s => ({ name: s.attributes.friendly_name || s.entity_id, id: s.entity_id }));
+                    resp.writeHead(200, { 'Content-Type': 'application/json' });
+                    resp.end(JSON.stringify(players));
+                })
+                .catch(() => resp.end("[]"));
             return;
         }
 
         if (urlPath === "/play_on_player") {
-            if (isAuthorized) {
-                if (!isLocal) {
-                    resp.statusCode = 403;
-                    return resp.end("Forbidden: Local Network Only");
-                }
-                const entity_id = getParam('entity_id');
-                const keys = getParam('keys');
-                const atype = getParam('atype') || '1';
-
-                if (!validateParam(entity_id, 'entity_id') || !validateParam(keys, 'key')) {
-                    resp.statusCode = 400;
-                    return resp.end("Bad Request");
-                }
-
-                const hostIp = await getHostIP();
-                let finalHost = hostIp || req.headers.host.split(':')[0];
-                finalHost = `${finalHost}:${port}`;
-
-                const streamUrl = `http://${finalHost}/radio?token=${mytoken}&keys=${keys}&atype=${atype}`;
-                console.log(`[Remote Play] Target: ${entity_id}, URL: ${streamUrl}`);
-
-                hassInstance.post('/services/media_player/play_media', {
-                    entity_id: entity_id,
-                    media_content_id: streamUrl,
-                    media_content_type: 'music'
-                }).then(() => resp.end("Success")).catch(() => (resp.statusCode = 500, resp.end("Error")));
-            } else {
+            if (!isLocal) {
                 resp.statusCode = 403;
-                resp.end("Forbidden");
+                return resp.end("Forbidden: Local Network Only");
             }
+            const entity_id = getParam('entity_id');
+            const keys = getParam('keys');
+            const atype = getParam('atype') || '1';
+
+            if (!validateParam(entity_id, 'entity_id') || !validateParam(keys, 'key')) {
+                resp.statusCode = 400;
+                return resp.end("Bad Request");
+            }
+
+            const hostIp = await getHostIP();
+            let finalHost = hostIp || req.headers.host.split(':')[0];
+            finalHost = `${finalHost}:${port}`;
+
+            const streamUrl = `http://${finalHost}/radio?token=${mytoken}&keys=${keys}&atype=${atype}`;
+            // [보안] 로그에 민감한 인증 토큰(token) 정보가 노출되는 현상을 예방하기 위해 마스킹 처리
+            const maskedUrl = streamUrl.replace(`token=${mytoken}`, 'token=******');
+            console.log(`[Remote Play] Target: ${entity_id}, URL: ${maskedUrl}`);
+
+            hassInstance.post('/services/media_player/play_media', {
+                entity_id: entity_id,
+                media_content_id: streamUrl,
+                media_content_type: 'music'
+            }).then(() => resp.end("Success")).catch(() => (resp.statusCode = 500, resp.end("Error")));
             return;
         }
 
         if (urlPath === "/media_action") {
-            if (isAuthorized) {
-                if (!isLocal) {
-                    resp.statusCode = 403;
-                    return resp.end("Forbidden: Local Network Only");
-                }
-                const entity_id = getParam('entity_id');
-                const action = getParam('action');
-
-                if (!validateParam(entity_id, 'entity_id') || !validateParam(action, 'action')) {
-                    resp.statusCode = 400;
-                    return resp.end("Bad Request");
-                }
-
-                hassInstance.post(`/services/media_player/${action}`, { entity_id })
-                    .then(() => resp.end("Success"))
-                    .catch(() => (resp.statusCode = 500, resp.end("Error")));
-            } else {
+            if (!isLocal) {
                 resp.statusCode = 403;
-                resp.end("Forbidden");
+                return resp.end("Forbidden: Local Network Only");
             }
+            const entity_id = getParam('entity_id');
+            const action = getParam('action');
+
+            if (!validateParam(entity_id, 'entity_id') || !validateParam(action, 'action')) {
+                resp.statusCode = 400;
+                return resp.end("Bad Request");
+            }
+
+            hassInstance.post(`/services/media_player/${action}`, { entity_id })
+                .then(() => resp.end("Success"))
+                .catch(() => (resp.statusCode = 500, resp.end("Error")));
             return;
         }
 
         if (urlPath === "/set_volume") {
-            if (isAuthorized) {
-                if (!isLocal) {
-                    resp.statusCode = 403;
-                    return resp.end("Forbidden: Local Network Only");
-                }
-                const entity_id = getParam('entity_id');
-                const volume = getParam('volume');
-
-                if (!validateParam(entity_id, 'entity_id') || !validateParam(volume, 'volume')) {
-                    resp.statusCode = 400;
-                    return resp.end("Bad Request");
-                }
-
-                hassInstance.post('/services/media_player/volume_set', {
-                    entity_id: entity_id,
-                    volume_level: parseFloat(volume)
-                }).then(() => resp.end("Success")).catch(() => (resp.statusCode = 500, resp.end("Error")));
-            } else {
+            if (!isLocal) {
                 resp.statusCode = 403;
-                resp.end("Forbidden");
+                return resp.end("Forbidden: Local Network Only");
             }
+            const entity_id = getParam('entity_id');
+            const volume = getParam('volume');
+
+            if (!validateParam(entity_id, 'entity_id') || !validateParam(volume, 'volume')) {
+                resp.statusCode = 400;
+                return resp.end("Bad Request");
+            }
+
+            hassInstance.post('/services/media_player/volume_set', {
+                entity_id: entity_id,
+                volume_level: parseFloat(volume)
+            }).then(() => resp.end("Success")).catch(() => (resp.statusCode = 500, resp.end("Error")));
             return;
         }
 
         if (urlPath === "/mute_volume") {
-            if (isAuthorized) {
-                if (!isLocal) {
-                    resp.statusCode = 403;
-                    return resp.end("Forbidden: Local Network Only");
-                }
-                const entity_id = getParam('entity_id');
-                const mute = getParam('mute') === 'true' || getParam('mute') === true;
-
-                if (!validateParam(entity_id, 'entity_id')) {
-                    resp.statusCode = 400;
-                    return resp.end("Bad Request");
-                }
-
-                hassInstance.post('/services/media_player/volume_mute', {
-                    entity_id: entity_id,
-                    is_volume_muted: mute
-                }).then(() => resp.end("Success")).catch(() => (resp.statusCode = 500, resp.end("Error")));
-            } else {
+            if (!isLocal) {
                 resp.statusCode = 403;
-                resp.end("Forbidden");
+                return resp.end("Forbidden: Local Network Only");
             }
+            const entity_id = getParam('entity_id');
+            const mute = getParam('mute') === 'true' || getParam('mute') === true;
+
+            if (!validateParam(entity_id, 'entity_id')) {
+                resp.statusCode = 400;
+                return resp.end("Bad Request");
+            }
+
+            hassInstance.post('/services/media_player/volume_mute', {
+                entity_id: entity_id,
+                is_volume_muted: mute
+            }).then(() => resp.end("Success")).catch(() => (resp.statusCode = 500, resp.end("Error")));
             return;
         }
 
