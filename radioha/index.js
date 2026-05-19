@@ -174,6 +174,11 @@ function clearAuthFailures(clientIP) {
 }
 
 function isLocalRequest(req) {
+    // [보안] Home Assistant Ingress 프록시를 통한 요청인 경우 항상 인증된 로컬 요청으로 신뢰
+    if (req.headers['x-ingress-path']) {
+        return true;
+    }
+
     const clientIP = getClientIP(req);
 
     const isPrivate = clientIP === '127.0.0.1' || clientIP === '::1' ||
