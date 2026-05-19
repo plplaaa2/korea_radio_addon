@@ -384,6 +384,18 @@ const liveServer = http.createServer((req, resp) => {
         // 4. 엔드포인트 라우팅 (Switch-case 구조화)
         switch (urlPath) {
             case "/": {
+                // [보안] 외부망 접속 시 웹 UI 진입 권한 검증 (토큰 스캔 봇 차단 및 유출 방지)
+                if (!isLocal && !isAuthorized) {
+                    recordAuthFailure(clientIP);
+                    return setTimeout(() => {
+                        resp.statusCode = 403;
+                        resp.end("Forbidden");
+                    }, 1000); // 1초 지연
+                }
+                if (isAuthorized) {
+                    clearAuthFailures(clientIP);
+                }
+
                 resp.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
                 const currentData = getRadioData();
                 const sortedKeys = Object.keys(currentData).sort((a, b) => {
