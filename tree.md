@@ -2,6 +2,7 @@
 
 ```text
 .
+├── .gitattributes           # Git 특성 정의 파일 (개행 문자 고정 등)
 ├── .gitignore               # Git 커밋 제외 대상 설정 파일
 ├── CHANGELOG.md             # 저장소 전체 변경 이력
 ├── LICENSE                  # 라이선스
