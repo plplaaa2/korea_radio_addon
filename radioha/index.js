@@ -405,6 +405,45 @@ async function handleRequest(req, resp, body) {
 
         // 4. 엔드포인트 라우팅 (Switch-case 구조화)
         switch (urlPath) {
+            case "/manifest.json": {
+                try {
+                    const manifest = fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8');
+                    resp.writeHead(200, { 'Content-Type': 'application/json' });
+                    resp.end(manifest);
+                } catch (e) {
+                    resp.statusCode = 404;
+                    resp.end("Not Found");
+                }
+                break;
+            }
+
+            case "/service-worker.js": {
+                try {
+                    const sw = fs.readFileSync(path.join(__dirname, 'service-worker.js'), 'utf8');
+                    resp.writeHead(200, { 'Content-Type': 'application/javascript' });
+                    resp.end(sw);
+                } catch (e) {
+                    resp.statusCode = 404;
+                    resp.end("Not Found");
+                }
+                break;
+            }
+
+            case "/icon.png": {
+                try {
+                    const iconPath = fs.existsSync(path.join(__dirname, 'icon.png')) 
+                        ? path.join(__dirname, 'icon.png')
+                        : path.join(__dirname, '../icon.png');
+                    const icon = fs.readFileSync(iconPath);
+                    resp.writeHead(200, { 'Content-Type': 'image/png' });
+                    resp.end(icon);
+                } catch (e) {
+                    resp.statusCode = 404;
+                    resp.end("Not Found");
+                }
+                break;
+            }
+
             case "/": {
                 // [보안] 외부망 접속 시 웹 UI 진입 권한 검증 (토큰 스캔 봇 차단 및 유출 방지)
                 if (!isLocal && !isAuthorized) {

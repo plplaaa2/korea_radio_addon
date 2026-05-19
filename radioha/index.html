@@ -3,6 +3,11 @@
 <head>
     <title>Korea Radio Player</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="apple-touch-icon" href="icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Outfit:wght@300;400;600&display=swap');
 
@@ -773,6 +778,15 @@
                 setTimeout(() => playRadio(currentKey), 3000);
             }
         };
+    </script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('service-worker.js')
+                    .then(reg => console.log('Service Worker registered:', reg.scope))
+                    .catch(err => console.error('Service Worker registration failed:', err));
+            });
+        }
     </script>
 </body>
 </html>

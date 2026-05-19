@@ -19,5 +19,7 @@
     ├── index.js             # 스트리밍 및 API 중계 백엔드 (Node.js)
     ├── package.json         # Node.js 패키지 의존성 설정
     ├── radio-list.json      # 방송국 채널 메타데이터 및 스트림 주소
+    ├── manifest.json        # PWA 매니페스트 설정 파일
+    ├── service-worker.js    # PWA 서비스 워커 파일
     └── run.sh               # 애드온 실행 셸 스크립트
 ```

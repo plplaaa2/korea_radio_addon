@@ -11,6 +11,8 @@ COPY index.html .
 COPY package.json .
 COPY radio-list.json .
 COPY run.sh .
+COPY manifest.json .
+COPY service-worker.js .
 
 # 실행 권한 부여 및 윈도우 개행 문자(CRLF) 제거 처리 (리눅스 빌드 오류 방지)
 RUN sed -i 's/\r$//' run.sh
