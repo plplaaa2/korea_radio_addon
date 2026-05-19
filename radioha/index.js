@@ -91,6 +91,24 @@ function escapeHtml(str) {
     });
 }
 
+// [보안] 사설 IP 대역(RFC 1918) 및 루프백, 링크 로컬 판별 함수
+function isPrivateIP(ip) {
+    if (!ip) return false;
+    if (ip === '::1' || ip.startsWith('fe80:')) return true;
+    if (ip === '127.0.0.1') return true;
+    if (ip.startsWith('10.')) return true;
+    if (ip.startsWith('192.168.')) return true;
+    if (ip.startsWith('169.254.')) return true;
+    if (ip.startsWith('172.')) {
+        const parts = ip.split('.');
+        if (parts.length >= 2) {
+            const second = parseInt(parts[1], 10);
+            if (second >= 16 && second <= 31) return true;
+        }
+    }
+    return false;
+}
+
 // [보안] IP별 인증 실패 횟수 및 임시 차단(Ban) 상태 관리 객체
 const authFailures = {};
 
@@ -98,13 +116,8 @@ function getClientIP(req) {
     let socketIP = req.socket.remoteAddress;
     if (socketIP.startsWith('::ffff:')) socketIP = socketIP.split('::ffff:')[1];
 
-    // 직전 연결 소켓이 로컬망(루프백 또는 사설 IP)인지 판별 (신뢰할 수 있는 역프록시인지 확인)
-    const isSocketLocal = socketIP === '127.0.0.1' || socketIP === '::1' ||
-        socketIP.startsWith('192.168.') ||
-        socketIP.startsWith('10.') ||
-        socketIP.startsWith('172.16.') || socketIP.startsWith('172.17.') ||
-        socketIP.startsWith('172.18.') || socketIP.startsWith('172.19.') ||
-        socketIP.startsWith('172.2') || socketIP.startsWith('172.3');
+    // 직전 연결 소켓이 로컬 사설 대역인지 판별
+    const isSocketLocal = isPrivateIP(socketIP);
 
     // 로컬망 프록시를 거쳐온 요청일 때에만 X-Forwarded-For 헤더를 신뢰하여 사용
     if (isSocketLocal && req.headers['x-forwarded-for']) {
@@ -125,7 +138,7 @@ function checkIPBan(clientIP) {
         const remaining = Math.ceil((record.bannedUntil - now) / 1000);
         return { isBanned: true, remaining };
     }
-    
+
     if (record.bannedUntil && now >= record.bannedUntil) {
         delete authFailures[clientIP];
     }
