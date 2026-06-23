@@ -3,7 +3,7 @@
 <head>
     <title>Korea Radio Player</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="manifest" href="manifest.json">
+    <link id="pwa-manifest" rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#0f172a">
     <link rel="apple-touch-icon" href="icon.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -26,6 +26,7 @@
 
         body { 
             font-family: 'Outfit', sans-serif; 
+            background-color: #0f172a; /* Fallback for WebViews */
             background: radial-gradient(circle at top right, #1e293b, #0f172a); 
             color: white; 
             margin: 0; 
@@ -508,6 +509,12 @@
         }
 
         window.addEventListener('DOMContentLoaded', () => {
+            // PWA manifest 동적 토큰 설정
+            const manifestLink = document.getElementById('pwa-manifest');
+            if (manifestLink && window.API_CONFIG) {
+                manifestLink.setAttribute('href', `manifest.json?token=${API_CONFIG.token}`);
+            }
+
             const lastKey = localStorage.getItem('radio_last_key');
             const lastQuality = localStorage.getItem('radio_quality');
             const lastVolume = localStorage.getItem('radio_volume');
@@ -577,9 +584,16 @@
             const fullStatus = `${displayName} 재생 중`;
             
             if (targetPlayer === "web") {
-                player.src = "radio?token=" + API_CONFIG.token + "&keys=" + key + "&atype=" + atype;
-                player.play().catch(() => { status.innerHTML = "자동 재생이 차단되었습니다. 재생 버튼을 눌러주세요."; });
-                status.innerHTML = fullStatus + " (웹 브라우저)";
+                if (window.Android && typeof window.Android.playChannel === 'function') {
+                    player.pause();
+                    player.src = "";
+                    window.Android.playChannel(key, displayName, displayFreq + " MHz");
+                    status.innerHTML = fullStatus + " (네이티브 플레이어)";
+                } else {
+                    player.src = "radio?token=" + API_CONFIG.token + "&keys=" + key + "&atype=" + atype;
+                    player.play().catch(() => { status.innerHTML = "자동 재생이 차단되었습니다. 재생 버튼을 눌러주세요."; });
+                    status.innerHTML = fullStatus + " (웹 브라우저)";
+                }
             } else {
                 player.pause(); 
                 player.src = ""; 
@@ -734,12 +748,15 @@
             }
         }
 
-        // 정지 버튼 (공용)
         function stopRadio() {
             if (playerSelect.value === "web") {
-                player.pause();
-                player.src = "";
-                status.innerHTML = "웹 재생 정지됨";
+                if (window.Android && typeof window.Android.stopChannel === 'function') {
+                    window.Android.stopChannel();
+                } else {
+                    player.pause();
+                    player.src = "";
+                }
+                status.innerHTML = "재생 정지됨";
                 updateButtonActive("");
                 currentKey = "";
                 localStorage.removeItem('radio_last_key');
@@ -762,8 +779,12 @@
                 if (oldPlayer !== "web") {
                     fetch(`media_action?token=${API_CONFIG.token}&entity_id=${oldPlayer}&action=media_stop`);
                 } else {
-                    player.pause();
-                    player.src = "";
+                    if (window.Android && typeof window.Android.stopChannel === 'function') {
+                        window.Android.stopChannel();
+                    } else {
+                        player.pause();
+                        player.src = "";
+                    }
                 }
             }
             
@@ -773,6 +794,7 @@
 
         player.onvolumechange = () => { localStorage.setItem('radio_volume', player.volume); };
         player.onerror = () => {
+            if (window.Android) return; // 안드로이드 네이티브 환경일 때는 웹뷰 에러 리커버리 무시
             if (currentKey && playerSelect.value === "web") {
                 status.innerHTML = "연결 오류: 다시 연결하는 중...";
                 setTimeout(() => playRadio(currentKey), 3000);

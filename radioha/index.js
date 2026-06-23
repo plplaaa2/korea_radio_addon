@@ -412,7 +412,12 @@ async function handleRequest(req, resp, body) {
         switch (urlPath) {
             case "/manifest.json": {
                 try {
-                    const manifest = fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8');
+                    let manifest = fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8');
+                    // [보안] 외부 접속 시 홈 화면 아이콘에 토큰을 동적으로 바인딩하여 403 오류 우회
+                    const reqToken = urlParams.get('token');
+                    const startUrl = reqToken ? `./?token=${reqToken}` : './';
+                    manifest = manifest.replace('{{START_URL}}', startUrl);
+
                     resp.writeHead(200, { 'Content-Type': 'application/json' });
                     resp.end(manifest);
                 } catch (e) {
