@@ -17,6 +17,13 @@
 │   ├── index.html           # 플레이어 프론트엔드 UI
 │   ├── index.js             # 스트리밍 백엔드 (Node.js)
 │   └── radio-list.json      # 방송국 채널 메타데이터
+├── android_backup_v2/       # 백그라운드 재생 개선을 위한 v2 원본 백업 폴더
+├── android_backup_v3/       # Android Auto Media3 서비스 복구 v3 백업 폴더
+├── android_backup_v4/       # 백그라운드 재생 안정화 패치 v4 백업 폴더
+├── android_backup_v5/       # TLS 연동 및 iframe 브릿지 우회 v5 백업 폴더
+├── android_backup_v6/       # AndroidBridge try-catch 보완 v6 백업 폴더
+├── android_backup_v7/       # WebView HTML5 Audio 완전 차단 및 ExoPlayer 강제 전환 v7 백업 폴더
+├── android_backup_v8/       # 캐시 갱신 전 최종 백업 폴더
 └── android/                 # [NEW] 안드로이드 오토 연동 모바일 앱 소스 폴더
     ├── app/
     │   ├── src/main/

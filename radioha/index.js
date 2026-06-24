@@ -281,6 +281,7 @@ function return_pipe(urls, resp, req, key) {
     const urlParams = myUrl.searchParams;
     let bitrateRaw = urlParams.get("atype") || "1";
     const bitrate = bitrateMap[bitrateRaw] || 128;
+    const format = urlParams.get("format") || "wav";
 
     // 채널 맞춤형 헤더 구성 (필요한 경우에만 Referer 추가)
     let headerStr = `User-Agent: ${FULL_UA}\r\n`;
@@ -288,19 +289,23 @@ function return_pipe(urls, resp, req, key) {
         headerStr += `Referer: https://www.obs.co.kr/\r\n`;
     }
 
+    const isMp3 = format === 'mp3';
+    const outFormat = isMp3 ? 'mp3' : 'wav';
+    const contentType = isMp3 ? 'audio/mpeg' : 'audio/wav';
+
     // [Smart Engine] 초기 로딩이 가장 빠른 순정 상태의 옵션으로 복구
     const ffmpegArgs = [
         "-headers", headerStr,
         "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "3",
         "-loglevel", "error", "-i", urls,
         "-c:a", "mp3", "-b:a", `${bitrate}k`, "-ac", "2",
-        "-bufsize", "256K", "-f", "wav", "pipe:1"
+        "-bufsize", "256K", "-f", outFormat, "pipe:1"
     ];
 
-    console.log(`[Smart Engine] ${key} - ${bitrate}k (Buffer: 256K)`);
+    console.log(`[Smart Engine] ${key} - ${bitrate}k (Format: ${outFormat}, Buffer: 256K)`);
 
     resp.writeHead(200, {
-        'Content-Type': 'audio/wav',
+        'Content-Type': contentType,
         'Transfer-Encoding': 'chunked',
         'Connection': 'keep-alive',
         'Cache-Control': 'no-cache, no-store, must-revalidate',

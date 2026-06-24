@@ -440,13 +440,10 @@
             <!-- 스피커 전용 리모컨 UI -->
             <div id="speaker_driver">
                 <div class="remote-controls">
-                    <button class="remote-btn" onclick="mediaAction('media_play')">
-                        <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    <button id="play_pause_btn" class="remote-btn" onclick="mediaAction('media_play')" title="재생">
+                        <svg id="play_pause_icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
                     </button>
-                    <button class="remote-btn" onclick="mediaAction('media_pause')">
-                        <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-                    </button>
-                    <button class="remote-btn stop" onclick="mediaAction('media_stop')">
+                    <button class="remote-btn stop" onclick="mediaAction('media_stop')" title="정지">
                         <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
                     </button>
                     <div class="volume-group">
@@ -470,9 +467,60 @@
         let currentKey = "";
         let lastStartedPlayerId = "";
 
+        function isAndroidAppEnv() {
+            if (navigator.userAgent.indexOf("KoreaRadioAndroid") !== -1) return true;
+            if (typeof window.Android !== 'undefined') return true;
+            try {
+                if (window.parent && typeof window.parent.Android !== 'undefined') return true;
+            } catch(e) {}
+            try {
+                if (window.top && typeof window.top.Android !== 'undefined') return true;
+            } catch(e) {}
+            return false;
+        }
+
+        function updatePlayPauseButtonUI(state) {
+            const btn = document.getElementById('play_pause_btn');
+            const icon = document.getElementById('play_pause_icon');
+            if (!btn || !icon) return;
+
+            if (state === "NOW PLAYING") {
+                icon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+                btn.setAttribute('onclick', "mediaAction('media_pause')");
+                btn.setAttribute('title', "일시정지");
+            } else {
+                icon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+                btn.setAttribute('onclick', "mediaAction('media_play')");
+                btn.setAttribute('title', "재생");
+            }
+        }
+
+        // 안드로이드 네이티브 앱 연동을 위한 자바스크립트 브릿지 탐색 (iframe 및 Cross-Origin 예외 우회)
+        function getAndroidBridge() {
+            try {
+                if (window.Android) return window.Android;
+            } catch (e) {
+                console.warn("window.Android access error:", e);
+            }
+            try {
+                if (window.parent && window.parent.Android) return window.parent.Android;
+            } catch (e) {
+                // Cross-Origin iframe 상황에서 SecurityError 예외 발생 방지
+                console.warn("window.parent.Android access error:", e);
+            }
+            try {
+                if (window.top && window.top.Android) return window.top.Android;
+            } catch (e) {
+                // Cross-Origin iframe 상황에서 SecurityError 예외 발생 방지
+                console.warn("window.top.Android access error:", e);
+            }
+            return null;
+        }
+
         async function loadPlayers() {
             if (!API_CONFIG.isLocal) {
                 console.log("외부 네트워크 접속: 스피커 목록을 불러오지 않습니다.");
+                updateUIByPlayer();
                 return;
             }
             try {
@@ -488,19 +536,38 @@
                 const lastSavedPlayer = localStorage.getItem('radio_player_id');
                 if (lastSavedPlayer) {
                     playerSelect.value = lastSavedPlayer;
-                    updateUIByPlayer();
                 }
             } catch (e) {
                 console.error("기기 목록 로드 실패", e);
+            } finally {
+                updateUIByPlayer();
             }
         }
 
         function updateUIByPlayer() {
             const grid = document.querySelector('.grid');
+            const isApp = isAndroidAppEnv();
+            
+            // 기기 선택 옵션 텍스트 동적 수정
+            const webOption = Array.from(playerSelect.options).find(opt => opt.value === "web");
+            if (webOption) {
+                if (isApp) {
+                    webOption.innerText = "안드로이드";
+                } else {
+                    webOption.innerText = "이 웹 브라우저";
+                }
+            }
+
             if (playerSelect.value === "web") {
-                webDriver.style.display = "flex";
-                speakerDriver.style.display = "none";
-                if (grid) grid.classList.remove('remote-mode');
+                if (isApp) {
+                    webDriver.style.display = "none";
+                    speakerDriver.style.display = "flex";
+                    if (grid) grid.classList.add('remote-mode');
+                } else {
+                    webDriver.style.display = "flex";
+                    speakerDriver.style.display = "none";
+                    if (grid) grid.classList.remove('remote-mode');
+                }
             } else {
                 webDriver.style.display = "none";
                 speakerDriver.style.display = "flex";
@@ -580,14 +647,28 @@
             document.getElementById('display_freq').innerText = displayFreq;
             document.getElementById('play_state').innerText = "NOW PLAYING";
             document.getElementById('play_state').classList.add('playing-indicator');
+            updatePlayPauseButtonUI("NOW PLAYING");
 
             const fullStatus = `${displayName} 재생 중`;
             
             if (targetPlayer === "web") {
-                if (window.Android && typeof window.Android.playChannel === 'function') {
+                const isApp = isAndroidAppEnv();
+                const bridge = getAndroidBridge();
+                if (isApp) {
                     player.pause();
                     player.src = "";
-                    window.Android.playChannel(key, displayName, displayFreq + " MHz");
+                    if (bridge && typeof bridge.playChannel === 'function') {
+                        bridge.playChannel(key, displayName, displayFreq + " MHz");
+                    } else if (window.Android && typeof window.Android.playChannel === 'function') {
+                        window.Android.playChannel(key, displayName, displayFreq + " MHz");
+                    } else {
+                        console.error("[NativeBridge] 안드로이드 앱 식별자는 있으나 playChannel 브릿지가 누락되었습니다.");
+                    }
+                    status.innerHTML = displayName + " 재생 중 (네이티브 플레이어)";
+                } else if (bridge && typeof bridge.playChannel === 'function') {
+                    player.pause();
+                    player.src = "";
+                    bridge.playChannel(key, displayName, displayFreq + " MHz");
                     status.innerHTML = fullStatus + " (네이티브 플레이어)";
                 } else {
                     player.src = "radio?token=" + API_CONFIG.token + "&keys=" + key + "&atype=" + atype;
@@ -660,6 +741,7 @@
                     document.getElementById('display_freq').innerText = freq;
                     document.getElementById('play_state').innerText = "NOW PLAYING";
                     document.getElementById('play_state').classList.add('playing-indicator');
+                    updatePlayPauseButtonUI("NOW PLAYING");
                 }
             });
             
@@ -668,12 +750,51 @@
                 document.getElementById('display_freq').innerText = "00.0";
                 document.getElementById('play_state').innerText = "READY TO PLAY";
                 document.getElementById('play_state').classList.remove('playing-indicator');
+                updatePlayPauseButtonUI("READY TO PLAY");
             }
         }
 
         async function mediaAction(action) {
             const targetPlayer = playerSelect.value;
-            if (targetPlayer === "web") return;
+            if (targetPlayer === "web") {
+                const bridge = getAndroidBridge();
+                if (bridge) {
+                    const playState = document.getElementById('play_state');
+                    if (action === 'media_play') {
+                        if (typeof bridge.resumeChannel === 'function') {
+                            bridge.resumeChannel();
+                        } else if (currentKey) {
+                            playRadio(currentKey);
+                        }
+                        status.innerHTML = "재생 중 (네이티브 플레이어)";
+                        playState.innerText = "NOW PLAYING";
+                        playState.classList.add('playing-indicator');
+                        updatePlayPauseButtonUI("NOW PLAYING");
+                    } else if (action === 'media_pause') {
+                        if (typeof bridge.pauseChannel === 'function') {
+                            bridge.pauseChannel();
+                        }
+                        status.innerHTML = "일시정지됨";
+                        playState.innerText = "PAUSED";
+                        playState.classList.remove('playing-indicator');
+                        updatePlayPauseButtonUI("PAUSED");
+                    } else if (action === 'media_stop') {
+                        if (typeof bridge.stopChannel === 'function') {
+                            bridge.stopChannel();
+                        }
+                        status.innerHTML = "재생 정지됨";
+                        updateButtonActive("");
+                        currentKey = "";
+                        lastStartedPlayerId = "";
+                        localStorage.removeItem('radio_last_key');
+                        
+                        playState.innerText = "READY TO PLAY";
+                        playState.classList.remove('playing-indicator');
+                        updatePlayPauseButtonUI("READY TO PLAY");
+                    }
+                }
+                return;
+            }
 
             status.innerHTML = "명령 전송 중...";
             try {
@@ -689,14 +810,17 @@
                         
                         playState.innerText = "READY TO PLAY";
                         playState.classList.remove('playing-indicator');
+                        updatePlayPauseButtonUI("READY TO PLAY");
                     } else if (action === 'media_pause') {
                         status.innerHTML = "일시정지됨";
                         playState.innerText = "PAUSED";
                         playState.classList.remove('playing-indicator');
+                        updatePlayPauseButtonUI("PAUSED");
                     } else if (action === 'media_play') {
                         status.innerHTML = "재생 중";
                         playState.innerText = "NOW PLAYING";
                         playState.classList.add('playing-indicator');
+                        updatePlayPauseButtonUI("NOW PLAYING");
                     } else {
                         status.innerHTML = "명령 수행 완료";
                     }
@@ -710,7 +834,13 @@
 
         async function setSpeakerVolume(val) {
             const targetPlayer = playerSelect.value;
-            if (targetPlayer === "web") return;
+            if (targetPlayer === "web") {
+                const bridge = getAndroidBridge();
+                if (bridge && typeof bridge.setVolume === 'function') {
+                    bridge.setVolume(parseFloat(val));
+                }
+                return;
+            }
             
             try {
                 await fetch(`set_volume?token=${API_CONFIG.token}&entity_id=${targetPlayer}&volume=${val}`);
@@ -724,8 +854,6 @@
         
         async function toggleMute() {
             const targetPlayer = playerSelect.value;
-            if (targetPlayer === "web") return;
-            
             isMuted = !isMuted;
             const icon = document.getElementById('mute_icon');
             const playState = document.getElementById('play_state');
@@ -735,12 +863,22 @@
                 playState.innerText = "MUTED";
                 playState.classList.remove('playing-indicator');
                 icon.style.fill = 'var(--danger)';
+                updatePlayPauseButtonUI("MUTED");
             } else {
                 playState.innerText = lastPlayState;
                 if (lastPlayState === "NOW PLAYING") playState.classList.add('playing-indicator');
                 icon.style.fill = '#ccc';
+                updatePlayPauseButtonUI(lastPlayState);
             }
 
+            if (targetPlayer === "web") {
+                const bridge = getAndroidBridge();
+                if (bridge && typeof bridge.setMute === 'function') {
+                    bridge.setMute(isMuted);
+                }
+                return;
+            }
+            
             try {
                 await fetch(`mute_volume?token=${API_CONFIG.token}&entity_id=${targetPlayer}&mute=${isMuted}`);
             } catch (e) {
@@ -750,8 +888,9 @@
 
         function stopRadio() {
             if (playerSelect.value === "web") {
-                if (window.Android && typeof window.Android.stopChannel === 'function') {
-                    window.Android.stopChannel();
+                const bridge = getAndroidBridge();
+                if (bridge && typeof bridge.stopChannel === 'function') {
+                    bridge.stopChannel();
                 } else {
                     player.pause();
                     player.src = "";
@@ -760,6 +899,13 @@
                 updateButtonActive("");
                 currentKey = "";
                 localStorage.removeItem('radio_last_key');
+                
+                const playState = document.getElementById('play_state');
+                if (playState) {
+                    playState.innerText = "READY TO PLAY";
+                    playState.classList.remove('playing-indicator');
+                }
+                updatePlayPauseButtonUI("READY TO PLAY");
             } else {
                 mediaAction('media_stop');
             }
@@ -779,8 +925,9 @@
                 if (oldPlayer !== "web") {
                     fetch(`media_action?token=${API_CONFIG.token}&entity_id=${oldPlayer}&action=media_stop`);
                 } else {
-                    if (window.Android && typeof window.Android.stopChannel === 'function') {
-                        window.Android.stopChannel();
+                    const bridge = getAndroidBridge();
+                    if (bridge && typeof bridge.stopChannel === 'function') {
+                        bridge.stopChannel();
                     } else {
                         player.pause();
                         player.src = "";
@@ -794,7 +941,7 @@
 
         player.onvolumechange = () => { localStorage.setItem('radio_volume', player.volume); };
         player.onerror = () => {
-            if (window.Android) return; // 안드로이드 네이티브 환경일 때는 웹뷰 에러 리커버리 무시
+            if (getAndroidBridge()) return; // 안드로이드 네이티브 환경일 때는 웹뷰 에러 리커버리 무시
             if (currentKey && playerSelect.value === "web") {
                 status.innerHTML = "연결 오류: 다시 연결하는 중...";
                 setTimeout(() => playRadio(currentKey), 3000);
