@@ -293,16 +293,19 @@ function return_pipe(urls, resp, req, key) {
     const outFormat = isMp3 ? 'mp3' : 'wav';
     const contentType = isMp3 ? 'audio/mpeg' : 'audio/wav';
 
-    // [Smart Engine] 초기 로딩이 가장 빠른 순정 상태의 옵션으로 복구
+    // [Smart Engine] 초기 로딩이 가장 빠른 순정 상태의 옵션으로 복구 (reconnect_at_eof 추가 및 bufsize 제거로 반응 속도/끊김 개선)
     const ffmpegArgs = [
         "-headers", headerStr,
-        "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "3",
+        "-reconnect", "1", 
+        "-reconnect_at_eof", "1",
+        "-reconnect_streamed", "1", 
+        "-reconnect_delay_max", "5",
         "-loglevel", "error", "-i", urls,
         "-c:a", "mp3", "-b:a", `${bitrate}k`, "-ac", "2",
-        "-bufsize", "256K", "-f", outFormat, "pipe:1"
+        "-f", outFormat, "pipe:1"
     ];
 
-    console.log(`[Smart Engine] ${key} - ${bitrate}k (Format: ${outFormat}, Buffer: 256K)`);
+    console.log(`[Smart Engine] ${key} - ${bitrate}k (Format: ${outFormat})`);
 
     resp.writeHead(200, {
         'Content-Type': contentType,
