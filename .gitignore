@@ -5,3 +5,8 @@ caution.jsonl
 # Backups and temporary files
 *_backup/
 *backup*
+android_backup*/
+
+# Android hybrid app project (exclude from addon repo)
+android/
+icons/
