@@ -65,6 +65,15 @@ class MyMediaLibraryService : MediaLibraryService() {
     private var cachedChannels = mutableListOf<RadioChannel>()
     private var isListLoaded = false
 
+    private fun getArtworkUri(key: String): Uri? {
+        val resId = resources.getIdentifier(key.lowercase(), "drawable", packageName)
+        return if (resId != 0) {
+            Uri.parse("android.resource://$packageName/$resId")
+        } else {
+            null
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -315,18 +324,20 @@ class MyMediaLibraryService : MediaLibraryService() {
                 if (cachedChannels.isNotEmpty()) {
                     for (channel in cachedChannels) {
                         val streamUrl = "$baseUrl/radio?keys=${channel.key}&token=$token&format=mp3"
+                        val artworkUri = getArtworkUri(channel.key)
+                        val metadataBuilder = MediaMetadata.Builder()
+                            .setTitle(channel.name)
+                            .setSubtitle(channel.frequency)
+                            .setFolderType(MediaMetadata.FOLDER_TYPE_NONE)
+                            .setIsPlayable(true)
+                        if (artworkUri != null) {
+                            metadataBuilder.setArtworkUri(artworkUri)
+                        }
                         val mediaItem = MediaItem.Builder()
                             .setMediaId(channel.key)
                             .setUri(Uri.parse(streamUrl))
                             .setMimeType(MimeTypes.AUDIO_MPEG)
-                            .setMediaMetadata(
-                                MediaMetadata.Builder()
-                                    .setTitle(channel.name)
-                                    .setSubtitle(channel.frequency)
-                                    .setFolderType(MediaMetadata.FOLDER_TYPE_NONE)
-                                    .setIsPlayable(true)
-                                    .build()
-                            )
+                            .setMediaMetadata(metadataBuilder.build())
                             .build()
                         mediaItems.add(mediaItem)
                     }
@@ -365,17 +376,19 @@ class MyMediaLibraryService : MediaLibraryService() {
                     val token = prefs.getString("security_token", "") ?: ""
                     val baseUrl = buildBaseUrl()
                     val streamUrl = "$baseUrl/radio?keys=${channel.key}&token=$token&format=mp3"
+                    val artworkUri = getArtworkUri(channel.key)
+                    val metadataBuilder = MediaMetadata.Builder()
+                        .setTitle(channel.name)
+                        .setSubtitle(channel.frequency)
+                        .setIsPlayable(true)
+                    if (artworkUri != null) {
+                        metadataBuilder.setArtworkUri(artworkUri)
+                    }
                     MediaItem.Builder()
                         .setMediaId(channel.key)
                         .setUri(Uri.parse(streamUrl))
                         .setMimeType(MimeTypes.AUDIO_MPEG)
-                        .setMediaMetadata(
-                            MediaMetadata.Builder()
-                                .setTitle(channel.name)
-                                .setSubtitle(channel.frequency)
-                                .setIsPlayable(true)
-                                .build()
-                        )
+                        .setMediaMetadata(metadataBuilder.build())
                         .build()
                 } else {
                     item

@@ -11,6 +11,7 @@
 ├── caution.jsonl            # 개발 주의사항 및 리스크 요약 파일
 ├── changelog.jsonl          # 내부 개발 버전 관리 대장 (JSONL)
 ├── tree.md                  # 프로젝트 디렉터리 구조 (본 파일)
+├── icons/                   # [NEW] 라디오 채널 아이콘 이미지 폴더
 ├── radioha/                 # 라디오 애드온 핵심 소스 폴더
 │   ├── Dockerfile           # 컨테이너 빌드 설정
 │   ├── config.json          # 애드온 설정 및 옵션 정의
@@ -25,6 +26,7 @@
 ├── android_backup_v7/       # WebView HTML5 Audio 완전 차단 및 ExoPlayer 강제 전환 v7 백업 폴더
 ├── android_backup_v8/       # 캐시 갱신 전 최종 백업 폴더
 ├── android_backup_v9/       # 네이티브 재생 시 status 텍스트 문구 간소화 전 백업 폴더
+├── android_backup_v10/      # 채널 아이콘 미디어 세션 아트 연동 전 백업 폴더
 └── android/                 # [NEW] 안드로이드 오토 연동 모바일 앱 소스 폴더
     ├── app/
     │   ├── src/main/

@@ -304,6 +304,15 @@ fun MainScreen(
 
 // 웹뷰 내의 자바스크립트 호출을 가로채 네이티브 백그라운드 재생 서비스(ExoPlayer)로 중계하는 클래스
 class WebAppInterface(private val context: Context, private val controllerProvider: () -> MediaController?) {
+    private fun getArtworkUri(key: String): Uri? {
+        val resId = context.resources.getIdentifier(key.lowercase(), "drawable", context.packageName)
+        return if (resId != 0) {
+            Uri.parse("android.resource://${context.packageName}/$resId")
+        } else {
+            null
+        }
+    }
+
     @android.webkit.JavascriptInterface
     fun playChannel(key: String, name: String, freq: String) {
         android.util.Log.i("KoreaRadioBridge", "playChannel 호출됨: key=$key, name=$name, freq=$freq")
@@ -325,17 +334,20 @@ class WebAppInterface(private val context: Context, private val controllerProvid
         val streamUrl = if (serverPort.isNotEmpty()) "$baseUrl:$serverPort/radio?keys=$key&token=$token&format=mp3" else "$baseUrl/radio?keys=$key&token=$token&format=mp3"
         android.util.Log.d("KoreaRadioBridge", "라디오 스트림 재생 경로: $streamUrl")
 
+        val artworkUri = getArtworkUri(key)
+        val metadataBuilder = MediaMetadata.Builder()
+            .setTitle(name)
+            .setSubtitle(freq)
+            .setIsPlayable(true)
+        if (artworkUri != null) {
+            metadataBuilder.setArtworkUri(artworkUri)
+        }
+
         val mediaItem = MediaItem.Builder()
             .setMediaId(key)
             .setUri(Uri.parse(streamUrl))
             .setMimeType(MimeTypes.AUDIO_MPEG)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(name)
-                    .setSubtitle(freq)
-                    .setIsPlayable(true)
-                    .build()
-            )
+            .setMediaMetadata(metadataBuilder.build())
             .build()
 
         (context as? Activity)?.runOnUiThread {
