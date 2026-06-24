@@ -664,12 +664,12 @@
                     } else {
                         console.error("[NativeBridge] 안드로이드 앱 식별자는 있으나 playChannel 브릿지가 누락되었습니다.");
                     }
-                    status.innerHTML = displayName + " 재생 중 (네이티브 플레이어)";
+                    status.innerHTML = displayName + " 재생 중";
                 } else if (bridge && typeof bridge.playChannel === 'function') {
                     player.pause();
                     player.src = "";
                     bridge.playChannel(key, displayName, displayFreq + " MHz");
-                    status.innerHTML = fullStatus + " (네이티브 플레이어)";
+                    status.innerHTML = fullStatus;
                 } else {
                     player.src = "radio?token=" + API_CONFIG.token + "&keys=" + key + "&atype=" + atype;
                     player.play().catch(() => { status.innerHTML = "자동 재생이 차단되었습니다. 재생 버튼을 눌러주세요."; });
@@ -766,7 +766,9 @@
                         } else if (currentKey) {
                             playRadio(currentKey);
                         }
-                        status.innerHTML = "재생 중 (네이티브 플레이어)";
+                        const nameEl = document.getElementById('display_name');
+                        const name = (nameEl && nameEl.innerText !== "방송국을 선택하세요") ? nameEl.innerText : "";
+                        status.innerHTML = name ? name + " 재생 중" : "재생 중";
                         playState.innerText = "NOW PLAYING";
                         playState.classList.add('playing-indicator');
                         updatePlayPauseButtonUI("NOW PLAYING");

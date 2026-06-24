@@ -24,6 +24,7 @@
 ├── android_backup_v6/       # AndroidBridge try-catch 보완 v6 백업 폴더
 ├── android_backup_v7/       # WebView HTML5 Audio 완전 차단 및 ExoPlayer 강제 전환 v7 백업 폴더
 ├── android_backup_v8/       # 캐시 갱신 전 최종 백업 폴더
+├── android_backup_v9/       # 네이티브 재생 시 status 텍스트 문구 간소화 전 백업 폴더
 └── android/                 # [NEW] 안드로이드 오토 연동 모바일 앱 소스 폴더
     ├── app/
     │   ├── src/main/
