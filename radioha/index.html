@@ -30,56 +30,45 @@
             background: radial-gradient(circle at top right, #1e293b, #0f172a); 
             color: white; 
             margin: 0; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            min-height: 100vh;
+            display: grid;
+            grid-template-rows: minmax(0, 1fr) auto;
+            justify-items: center;
+            height: 100vh;
+            height: 100dvh;
             overflow-x: hidden;
         }
 
-        .container { padding: 30px 20px; width: 100%; max-width: 1100px; }
-
-        /* Display Panel (Sticky Floating at the Top) */
-        .display-panel {
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.8) 100%);
-            border: 1px solid var(--glass-border);
-            border-radius: 24px;
-            padding: 25px 30px;
-            margin-bottom: 25px;
-            text-align: center;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            backdrop-filter: blur(15px);
-            position: sticky;
-            top: 10px;
-            z-index: 100;
-            overflow: hidden;
+        /* Reserve space for the remote and scroll only the station area. Related: index.js. */
+        .container {
+            padding: 30px 20px 18px;
             width: 100%;
+            max-width: 1100px;
+            overflow-y: auto;
         }
 
-        .display-panel::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(0, 210, 255, 0.05) 0%, transparent 70%);
-            pointer-events: none;
+        .display-panel {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            width: 100%;
+            padding: 0 2px 10px;
+            border-bottom: 1px solid var(--glass-border);
+            text-align: left;
         }
 
         .now-playing-label {
-            font-size: 0.8em;
+            font-size: 0.7em;
             color: var(--primary);
-            letter-spacing: 3px;
+            letter-spacing: 1.5px;
             font-weight: 600;
             margin-bottom: 5px;
             opacity: 0.8;
         }
 
         .display-name {
-            font-size: 1.4em;
+            font-size: clamp(0.95rem, 3.8vw, 1.2rem);
             font-weight: 600;
-            margin-bottom: 10px;
             color: #fff;
             text-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
         }
@@ -87,41 +76,26 @@
         .freq-container {
             display: inline-flex;
             align-items: baseline;
-            gap: 10px;
+            gap: 5px;
             font-family: 'Orbitron', sans-serif;
             color: var(--primary);
             text-shadow: 0 0 20px rgba(0, 210, 255, 0.5);
         }
 
         .display-freq {
-            font-size: 4.4em;
+            font-size: clamp(1.4rem, 5.8vw, 2.2rem);
             font-weight: 700;
             line-height: 1;
         }
 
         .mhz {
-            font-size: 1.1em;
+            font-size: 0.75em;
             opacity: 0.7;
             font-weight: 400;
         }
 
-        .station-display {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-
-        /* Android App StatusBar Margin for Sticky Display Panel */
-        .android-app-env .display-panel {
-            top: 30px;
-        }
-
-        /* Bottom Floating Media Control Card (Without status text) */
         .media-control-card {
-            position: fixed;
-            bottom: 15px;
-            left: 50%;
-            transform: translateX(-50%);
+            margin: 0 0 calc(15px + env(safe-area-inset-bottom, 0px));
             width: calc(100% - 40px);
             max-width: 500px;
             background: rgba(15, 23, 42, 0.85);
@@ -250,18 +224,10 @@
 
         select:focus { border-color: var(--primary); }
 
-        /* Grid - Bottom Margin to offset the floating bar */
         .grid { 
             display: grid; 
             grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); 
             gap: 20px; 
-            margin-bottom: 160px; /* Default bottom margin when volume slider is hidden in Android app */
-            transition: margin-bottom 0.3s ease;
-        }
-
-        /* With volume slider (regular web browsers) we need slightly more space */
-        body:not(.android-app-env) .grid {
-            margin-bottom: 215px;
         }
 
         .radio-btn { 
@@ -305,22 +271,6 @@
             display: none;
         }
 
-        /* Footer Info */
-        .footer-header { 
-            width: 100%; 
-            padding: 20px; 
-            text-align: center; 
-            font-family: 'Orbitron', sans-serif;
-            font-size: 0.85em; 
-            font-weight: 700;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            color: var(--primary);
-            opacity: 0.4;
-            margin-top: 10px;
-            margin-bottom: 20px;
-        }
-
         /* Animations */
         @keyframes pulse {
             0% { opacity: 1; }
@@ -330,11 +280,8 @@
         .playing-indicator { animation: pulse 2s infinite; color: var(--success); font-weight: bold; }
 
         @media (max-width: 600px) {
-            .display-panel { top: 5px; padding: 15px 20px; }
-            .android-app-env .display-panel { top: 25px; }
-            .display-panel .display-name { font-size: 1.25em; margin-bottom: 5px; }
-            .display-freq { font-size: 3em; }
-            .media-control-card { bottom: 10px; width: calc(100% - 20px); padding: 10px 15px; gap: 8px; }
+            .media-control-card { margin-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); width: calc(100% - 20px); padding: 10px 15px; gap: 8px; }
+            .control-row { gap: clamp(8px, 4vw, 20px); }
             .remote-btn { width: 44px; height: 44px; }
             .remote-btn svg { width: 20px; height: 20px; }
             .settings-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -344,6 +291,56 @@
             .grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
             .volume-group-large { padding: 6px 12px; max-width: 200px; gap: 10px; }
         }
+
+        /* Station editor and icon controls. Related: index.js. */
+        .station-tools {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .station-tools[hidden] { display: none; }
+
+        .station-tools button,
+        .station-dialog button {
+            min-height: 44px;
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            background: var(--card-bg);
+            color: white;
+            cursor: pointer;
+        }
+
+        .station-tools button { width: 44px; display: grid; place-items: center; }
+        .station-tools button:hover, .station-dialog button:hover { border-color: var(--primary); }
+        .station-tools svg { width: 20px; height: 20px; }
+        .station-tools button[data-station-action="delete"] { color: #ff9aa5; }
+
+        .station-dialog {
+            width: min(420px, calc(100% - 24px));
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            background: #172238;
+            color: white;
+            padding: 20px;
+        }
+
+        .station-dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+        .station-dialog h2 { margin: 0 0 14px; font-size: 1.15rem; }
+        .station-dialog form, .station-dialog label, .station-fields { display: grid; gap: 8px; }
+        .station-dialog [hidden] { display: none; }
+        .station-dialog input {
+            width: 100%;
+            padding: 9px 10px;
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            background: #0f172a;
+            color: white;
+        }
+        .station-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+        .station-dialog-actions button { padding: 0 14px; }
+        .station-dialog-actions button:disabled { opacity: 0.5; cursor: default; }
+        .station-dialog-message { margin: 0; color: #ffb3bb; overflow-wrap: anywhere; }
 
         .card-footer-brand {
             font-family: 'Orbitron', sans-serif;
@@ -359,18 +356,17 @@
 </head>
 <body>
     <div class="container">
-        <!-- 대형 주파수 디스플레이 (상단 Sticky 고정 카드) -->
-        <div class="display-panel">
-            <div class="now-playing-label" id="play_state">READY TO PLAY</div>
-            <div class="station-display">
-                <div id="display_name" class="display-name">방송국을 선택하세요</div>
-                <div class="freq-container">
-                    <span id="display_freq" class="display-freq">00.0</span>
-                    <span class="mhz">MHz</span>
-                </div>
-            </div>
+        <div class="station-tools" id="station_tools" role="group" aria-label="방송 관리" hidden>
+            <button type="button" data-station-action="add" aria-label="방송 추가" title="방송 추가">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button type="button" data-station-action="edit" aria-label="방송 수정" title="방송 수정">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5 4 4M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11z"/></svg>
+            </button>
+            <button type="button" data-station-action="delete" aria-label="방송 삭제" title="방송 삭제">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg>
+            </button>
         </div>
-
         <div class="settings-grid">
             <div class="setting-card">
                 <div class="label">
@@ -394,17 +390,25 @@
             </div>
         </div>
 
-        <div class="grid">
+        <div class="grid" id="station_grid">
             {{RADIO_BUTTONS}}
         </div>
         
         <!-- 숨겨진 웹 플레이어 오디오 엘리먼트 -->
         <audio id="player"></audio>
-        <div class="footer-header">KOREA RADIO PLAYER</div>
     </div>
 
-    <!-- 하단 고정형 미디어 컨트롤러 카드 (미니 상태 텍스트 없음) -->
-    <div class="media-control-card">
+    <section class="media-control-card" aria-label="라디오 리모컨">
+        <div class="display-panel">
+            <div>
+                <div class="now-playing-label" id="play_state" role="status">READY TO PLAY</div>
+                <div id="display_name" class="display-name">방송국을 선택하세요</div>
+            </div>
+            <div class="freq-container">
+                <span id="display_freq" class="display-freq">00.0</span>
+                <span class="mhz">MHz</span>
+            </div>
+        </div>
         <div class="info" id="status" style="display: none;">연결 준비 완료</div>
         <div class="control-row">
             <button class="remote-btn" onclick="playPrevStation()" title="이전 방송">
@@ -427,7 +431,25 @@
             </div>
         </div>
         <div class="card-footer-brand">KOREA RADIO PLAYER</div>
-    </div>
+    </section>
+
+    <dialog class="station-dialog" id="station_dialog" aria-labelledby="station_dialog_title">
+        <form id="station_form">
+            <h2 id="station_dialog_title"></h2>
+            <label id="station_picker">대상 방송 <select name="station"></select></label>
+            <div class="station-fields" id="station_fields">
+                <label>방송명 <input name="name" maxlength="80" required></label>
+                <label>주파수 (MHz) <input name="frequency" type="number" min="0" max="10000" step="any" required></label>
+                <label>스트림 주소 <input name="url" type="url" maxlength="2048" placeholder="https://"></label>
+            </div>
+            <label>애드온의 사용자 지정 토큰 <input name="credential" type="password" autocomplete="off" required></label>
+            <p id="station_dialog_message" class="station-dialog-message" role="status"></p>
+            <div class="station-dialog-actions">
+                <button type="button" id="station_cancel">취소</button>
+                <button type="submit" id="station_submit">저장</button>
+            </div>
+        </form>
+    </dialog>
 
     <script>
         const player = document.getElementById('player');
@@ -439,6 +461,155 @@
         let lastStartedPlayerId = "";
         let lastPlaySignature = "";
         let lastPlayRequestAt = 0;
+        // Track confirmed playback and cancel stale retries. Related: index.js.
+        let playbackRequest = 0;
+        let retryTimer;
+        let retryCount = 0;
+
+        const sendMediaCommand = (path, params) => fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(params)
+        });
+
+        // Keep station controls and saved selections in sync. Related: index.js.
+        const stationGrid = document.getElementById('station_grid');
+        const stationTools = document.getElementById('station_tools');
+        const stationDialog = document.getElementById('station_dialog');
+        const stationForm = document.getElementById('station_form');
+        const stationPicker = stationForm.elements.station;
+        const stationMessage = document.getElementById('station_dialog_message');
+        const stationSubmit = document.getElementById('station_submit');
+        const stationCancel = document.getElementById('station_cancel');
+        const stationActions = { add: '방송 추가', edit: '방송 수정', delete: '방송 삭제' };
+        let editorAction;
+        let editorStations = {};
+        let editorRequest = 0;
+
+        stationTools.hidden = !API_CONFIG.isLocal;
+        stationGrid.addEventListener('click', event => {
+            const button = event.target.closest('button[data-station-key]');
+            if (button) playRadio(button.dataset.stationKey);
+        });
+
+        function sortedStations(stations) {
+            return Object.entries(stations).sort((a, b) => (a[1]?.freq ?? 999) - (b[1]?.freq ?? 999));
+        }
+
+        function fillStationFields() {
+            if (editorAction !== 'edit') return;
+            const station = editorStations[stationPicker.value];
+            const fields = stationForm.elements;
+            fields.name.value = station?.name ?? stationPicker.value.toUpperCase();
+            fields.frequency.value = station?.freq ?? '';
+            const url = typeof station === 'string' ? station : station?.url ?? '';
+            const builtinStream = ['kbs_lib', 'mbc_lib', 'sbs_lib'].includes(url);
+            fields.url.value = builtinStream ? '' : url;
+            fields.url.required = !builtinStream;
+            fields.url.placeholder = builtinStream ? '비워 두면 기본 스트림 유지' : 'https://';
+        }
+
+        stationTools.addEventListener('click', async event => {
+            const action = event.target.closest('button')?.dataset.stationAction;
+            if (!action || stationDialog.open) return;
+            const request = ++editorRequest;
+            editorAction = action;
+            stationForm.reset();
+            stationPicker.replaceChildren();
+            const editing = action !== 'delete';
+            document.getElementById('station_dialog_title').textContent = stationActions[action];
+            document.getElementById('station_picker').hidden = action === 'add';
+            document.getElementById('station_fields').hidden = !editing;
+            for (const field of ['name', 'frequency', 'url']) stationForm.elements[field].disabled = !editing;
+            stationForm.elements.url.required = action === 'add';
+            stationForm.elements.url.placeholder = 'https://';
+            stationSubmit.textContent = editing ? '저장' : '삭제 확인';
+            stationSubmit.disabled = action !== 'add';
+            stationMessage.textContent = action === 'add' ? '' : '방송 목록을 불러오는 중…';
+            stationDialog.showModal();
+            if (action === 'add') return;
+
+            try {
+                const response = await fetch('get_radio_list', { cache: 'no-store' });
+                if (!response.ok) throw new Error();
+                const stations = await response.json();
+                if (request !== editorRequest || !stationDialog.open) return;
+                editorStations = stations;
+                for (const [key, station] of sortedStations(stations)) {
+                    stationPicker.add(new Option(station?.name ?? key.toUpperCase(), key));
+                }
+                if (Object.hasOwn(stations, currentKey)) stationPicker.value = currentKey;
+                fillStationFields();
+                stationSubmit.disabled = !stationPicker.length;
+                stationMessage.textContent = stationPicker.length ? '' : '관리할 방송이 없습니다.';
+            } catch {
+                if (request === editorRequest && stationDialog.open) stationMessage.textContent = '방송 목록을 불러오지 못했습니다.';
+            }
+        });
+
+        stationPicker.addEventListener('change', fillStationFields);
+        stationCancel.addEventListener('click', () => stationDialog.close());
+        stationDialog.addEventListener('cancel', event => {
+            if (stationCancel.disabled) event.preventDefault();
+        });
+        stationDialog.addEventListener('close', () => { stationForm.elements.credential.value = ''; });
+
+        function renderStations(stations) {
+            const buttons = sortedStations(stations).map(([key, station]) => {
+                const button = document.createElement('button');
+                const name = document.createElement('div');
+                const frequency = document.createElement('div');
+                button.type = 'button';
+                button.className = 'radio-btn';
+                button.dataset.stationKey = key;
+                button.classList.toggle('active', key === currentKey);
+                name.className = 'btn-name';
+                name.textContent = station?.name ?? key.toUpperCase();
+                frequency.className = 'btn-freq';
+                frequency.textContent = station?.freq === undefined ? '' : station.freq + ' MHz';
+                button.append(name, frequency);
+                return button;
+            });
+            stationGrid.replaceChildren(...buttons);
+        }
+
+        stationForm.addEventListener('submit', async event => {
+            event.preventDefault();
+            if (stationSubmit.disabled) return;
+            const fields = stationForm.elements;
+            const key = stationPicker.value;
+            const original = editorStations[key];
+            const action = editorAction;
+            const params = { action, key, token: fields.credential.value };
+            if (action !== 'delete') {
+                params.name = fields.name.value;
+                params.freq = fields.frequency.valueAsNumber;
+                params.url = fields.url.value.trim() || (typeof original === 'string' ? original : original?.url);
+            }
+            stationSubmit.disabled = stationCancel.disabled = true;
+            fields.credential.value = '';
+            stationMessage.textContent = '';
+            try {
+                const response = await sendMediaCommand('manage_stations', params);
+                if (!response.ok) {
+                    const message = await response.text();
+                    throw new Error(message === 'Forbidden' ? '토큰을 확인하세요.' : message);
+                }
+                const stations = await response.json();
+                if (action === 'delete' && currentKey === key) await mediaAction('media_stop');
+                renderStations(stations);
+                if (action === 'edit' && currentKey === key) {
+                    document.getElementById('display_name').textContent = stations[key].name;
+                    document.getElementById('display_freq').textContent = stations[key].freq;
+                }
+                if (action === 'delete' && localStorage.getItem('radio_last_key') === key) localStorage.removeItem('radio_last_key');
+                stationDialog.close();
+            } catch (error) {
+                stationMessage.textContent = error.message || '방송 목록을 저장하지 못했습니다.';
+            } finally {
+                stationSubmit.disabled = stationCancel.disabled = false;
+            }
+        });
 
         function isAndroidAppEnv() {
             if (navigator.userAgent.indexOf("KoreaRadioAndroid") !== -1) return true;
@@ -497,7 +668,8 @@
                 return;
             }
             try {
-                const response = await fetch("get_players?token=" + API_CONFIG.token);
+                const response = await fetch('get_players');
+                if (!response.ok) throw new Error('기기 목록 요청 실패');
                 const players = await response.json();
                 players.forEach(p => {
                     const opt = document.createElement("option");
@@ -507,7 +679,7 @@
                 });
                 
                 const lastSavedPlayer = localStorage.getItem('radio_player_id');
-                if (lastSavedPlayer) {
+                if (Array.from(playerSelect.options).some(option => option.value === lastSavedPlayer)) {
                     playerSelect.value = lastSavedPlayer;
                 }
             } catch (e) {
@@ -541,12 +713,6 @@
         }
 
         window.addEventListener('DOMContentLoaded', () => {
-            // PWA manifest 동적 토큰 설정
-            const manifestLink = document.getElementById('pwa-manifest');
-            if (manifestLink && window.API_CONFIG) {
-                manifestLink.setAttribute('href', `manifest.json?token=${API_CONFIG.token}`);
-            }
-
             if (isAndroidAppEnv()) {
                 document.body.classList.add('android-app-env');
             }
@@ -558,31 +724,39 @@
             
             if (lastQuality) quality.value = lastQuality;
             
-            if (lastVolume) {
-                player.volume = parseFloat(lastVolume);
-                if (speakerVolumeInput) speakerVolumeInput.value = lastVolume;
-            } else {
-                player.volume = 0.5;
-                if (speakerVolumeInput) speakerVolumeInput.value = 0.5;
-            }
+            const savedVolume = lastVolume === null ? 0.5 : Number(lastVolume);
+            player.volume = Number.isFinite(savedVolume) && savedVolume >= 0 && savedVolume <= 1 ? savedVolume : 0.5;
+            if (speakerVolumeInput) speakerVolumeInput.value = player.volume;
 
             loadPlayers().then(() => {
                 if (lastKey) {
-                    setTimeout(() => playRadio(lastKey), 500); 
+                    setTimeout(() => {
+                        if (playbackRequest === 0 && Array.from(stationGrid.children).some(button => button.dataset.stationKey === lastKey)) {
+                            playRadio(lastKey);
+                        }
+                    }, 500);
                 }
             });
         });
 
         // 웹 플레이어 재생 상태 감지
-        player.onplay = () => {
+        function setPlaybackState(state) {
             const playState = document.getElementById('play_state');
-            playState.innerText = "NOW PLAYING";
-            playState.classList.add('playing-indicator');
-            updatePlayPauseButtonUI("NOW PLAYING");
+            playState.innerText = state;
+            playState.classList.toggle('playing-indicator', state === 'NOW PLAYING');
+            updatePlayPauseButtonUI(state);
+        }
+
+        player.onplaying = () => {
+            if (playerSelect.value !== 'web' || getAndroidBridge()) return;
+            retryCount = 0;
+            clearTimeout(retryTimer);
+            setPlaybackState('NOW PLAYING');
+            status.textContent = '재생 중 (웹 브라우저)';
         };
         player.onpause = () => {
             const playState = document.getElementById('play_state');
-            if (currentKey) {
+            if (currentKey && player.paused && playerSelect.value === 'web' && player.hasAttribute('src') && !getAndroidBridge()) {
                 playState.innerText = "PAUSED";
                 playState.classList.remove('playing-indicator');
                 updatePlayPauseButtonUI("PAUSED");
@@ -595,14 +769,14 @@
          * @param {boolean} skipScroll - 활성 버튼으로의 자동 스크롤 여부 (기본값: false)
          * 연결 파일: index.js (백엔드 API 호출)
          */
-        function playRadio(key, skipScroll = false) {
+        function playRadio(key, skipScroll = false, isRetry = false) {
             const atype = quality.value;
             const targetPlayer = playerSelect.value;
             const requestSignature = `${key}|${targetPlayer}|${atype}`;
             const now = Date.now();
 
             if (
-                currentKey === key &&
+                !isRetry && currentKey === key &&
                 lastStartedPlayerId === targetPlayer &&
                 lastPlaySignature === requestSignature &&
                 (now - lastPlayRequestAt) < 4000
@@ -613,6 +787,9 @@
 
             lastPlaySignature = requestSignature;
             lastPlayRequestAt = now;
+            const request = ++playbackRequest;
+            clearTimeout(retryTimer);
+            if (!isRetry) retryCount = 0;
             
             // 버튼들 중에서 현재 key에 해당하는 버튼 찾기
             const buttons = document.querySelectorAll('.radio-btn');
@@ -620,7 +797,7 @@
             let displayFreq = "00.0";
 
             buttons.forEach(btn => {
-                const btnKey = btn.getAttribute('onclick').match(/'([^']+)'/)[1];
+                const btnKey = btn.dataset.stationKey;
                 if (btnKey === key) {
                     btn.classList.add('active');
                     displayName = btn.querySelector('.btn-name').innerText;
@@ -638,9 +815,7 @@
             // 상단 디스플레이 업데이트
             document.getElementById('display_name').innerText = displayName;
             document.getElementById('display_freq').innerText = displayFreq;
-            document.getElementById('play_state').innerText = "NOW PLAYING";
-            document.getElementById('play_state').classList.add('playing-indicator');
-            updatePlayPauseButtonUI("NOW PLAYING");
+            setPlaybackState('LOADING');
 
             const fullStatus = `${displayName} 재생 중`;
             
@@ -649,35 +824,51 @@
                 const bridge = getAndroidBridge();
                 if (isApp) {
                     player.pause();
-                    player.src = "";
+                    player.removeAttribute('src');
                     if (bridge && typeof bridge.playChannel === 'function') {
                         bridge.playChannel(key, displayName, displayFreq + " MHz");
                     } else if (window.Android && typeof window.Android.playChannel === 'function') {
                         window.Android.playChannel(key, displayName, displayFreq + " MHz");
                     } else {
                         console.error("[NativeBridge] 안드로이드 앱 식별자는 있으나 playChannel 브릿지가 누락되었습니다.");
+                        setPlaybackState('READY TO PLAY');
+                        status.textContent = '안드로이드 재생 연결 실패';
+                        return;
                     }
-                    status.innerHTML = displayName + " 재생 중";
+                    setPlaybackState('NOW PLAYING');
+                    status.textContent = fullStatus;
                 } else if (bridge && typeof bridge.playChannel === 'function') {
                     player.pause();
-                    player.src = "";
+                    player.removeAttribute('src');
                     bridge.playChannel(key, displayName, displayFreq + " MHz");
-                    status.innerHTML = fullStatus;
+                    setPlaybackState('NOW PLAYING');
+                    status.textContent = fullStatus;
                 } else {
-                    player.src = "radio?token=" + API_CONFIG.token + "&keys=" + key + "&atype=" + atype;
-                    player.play().catch(() => { status.innerHTML = "자동 재생이 차단되었습니다. 재생 버튼을 눌러주세요."; });
-                    status.innerHTML = fullStatus + " (웹 브라우저)";
+                    status.textContent = displayName + ' 연결 중...';
+                    player.src = 'radio?' + new URLSearchParams({ keys: key, atype });
+                    player.play().catch(error => {
+                        if (request !== playbackRequest || error.name !== 'NotAllowedError') return;
+                        setPlaybackState('READY TO PLAY');
+                        status.textContent = '자동 재생이 차단되었습니다. 재생 버튼을 눌러주세요.';
+                    });
                 }
             } else {
-                player.pause(); 
-                player.src = ""; 
-                status.innerHTML = displayName + " 명령 송신 중...";
-                fetch("play_on_player?token=" + API_CONFIG.token + "&entity_id=" + targetPlayer + "&keys=" + key + "&atype=" + atype)
+                player.pause();
+                player.removeAttribute('src');
+                player.load();
+                status.textContent = displayName + ' 명령 송신 중...';
+                const playerName = playerSelect.selectedOptions[0].text;
+                sendMediaCommand('play_on_player', { entity_id: targetPlayer, keys: key, atype })
                     .then(res => {
-                        if (res.ok) status.innerHTML = fullStatus + " (" + playerSelect.options[playerSelect.selectedIndex].text + ")";
-                        else status.innerHTML = "재행 명령 실패";
-                    }).catch(e => {
-                        status.innerHTML = "통신 오류";
+                        if (!res.ok) throw new Error('재생 명령 실패');
+                        if (request !== playbackRequest) return;
+                        setPlaybackState('NOW PLAYING');
+                        status.textContent = fullStatus + ' (' + playerName + ')';
+                    }).catch(() => {
+                        if (request !== playbackRequest) return;
+                        lastPlaySignature = '';
+                        setPlaybackState('READY TO PLAY');
+                        status.textContent = '재생 명령 실패';
                     });
             }
 
@@ -697,13 +888,13 @@
             
             let nextIndex = 0;
             if (currentKey) {
-                const currentIndex = buttons.findIndex(btn => btn.getAttribute('onclick').includes(`'${currentKey}'`));
+                const currentIndex = buttons.findIndex(btn => btn.dataset.stationKey === currentKey);
                 if (currentIndex !== -1) {
                     nextIndex = (currentIndex + 1) % buttons.length;
                 }
             }
             
-            const nextKey = buttons[nextIndex].getAttribute('onclick').match(/'([^']+)'/)[1];
+            const nextKey = buttons[nextIndex].dataset.stationKey;
             playRadio(nextKey, true); // 탐색 버튼 사용 시에는 스크롤하지 않음
         }
 
@@ -713,19 +904,19 @@
             
             let prevIndex = buttons.length - 1;
             if (currentKey) {
-                const currentIndex = buttons.findIndex(btn => btn.getAttribute('onclick').includes(`'${currentKey}'`));
+                const currentIndex = buttons.findIndex(btn => btn.dataset.stationKey === currentKey);
                 if (currentIndex !== -1) {
                     prevIndex = (currentIndex - 1 + buttons.length) % buttons.length;
                 }
             }
             
-            const prevKey = buttons[prevIndex].getAttribute('onclick').match(/'([^']+)'/)[1];
+            const prevKey = buttons[prevIndex].dataset.stationKey;
             playRadio(prevKey, true); // 탐색 버튼 사용 시에는 스크롤하지 않음
         }
 
         function updateButtonActive(key) {
             document.querySelectorAll('.radio-btn').forEach(btn => {
-                const btnKey = btn.getAttribute('onclick').match(/'([^']+)'/)[1];
+                const btnKey = btn.dataset.stationKey;
                 const isActive = btnKey === key;
                 btn.classList.toggle('active', isActive);
                 
@@ -750,6 +941,8 @@
         }
 
         async function mediaAction(action) {
+            const request = ++playbackRequest;
+            clearTimeout(retryTimer);
             const targetPlayer = playerSelect.value;
             const playState = document.getElementById('play_state');
             const isApp = isAndroidAppEnv();
@@ -765,7 +958,7 @@
                         } else if (currentKey) {
                             playRadio(currentKey);
                         }
-                        status.innerHTML = name ? name + " 재생 중" : "재생 중";
+                        status.textContent = name ? name + " 재생 중" : "재생 중";
                         playState.innerText = "NOW PLAYING";
                         playState.classList.add('playing-indicator');
                         updatePlayPauseButtonUI("NOW PLAYING");
@@ -778,7 +971,7 @@
                         playState.classList.remove('playing-indicator');
                         updatePlayPauseButtonUI("PAUSED");
                     } else if (action === 'media_stop') {
-                        if (typeof bridge.stopChannel === 'function') {
+                        if (bridge && typeof bridge.stopChannel === 'function') {
                             bridge.stopChannel();
                         }
                         status.innerHTML = "재생 정지됨";
@@ -794,16 +987,19 @@
                 } else {
                     // 일반 웹 브라우저 재생 제어 통합
                     if (action === 'media_play') {
-                        if (player.src) {
+                        if (player.hasAttribute('src') && !player.error) {
                             player.play().then(() => {
-                                status.innerHTML = name ? name + " 재생 중 (웹 브라우저)" : "재생 중 (웹 브라우저)";
+                                if (request !== playbackRequest) return;
+                                status.textContent = name ? name + " 재생 중 (웹 브라우저)" : "재생 중 (웹 브라우저)";
                                 playState.innerText = "NOW PLAYING";
                                 playState.classList.add('playing-indicator');
                                 updatePlayPauseButtonUI("NOW PLAYING");
                             }).catch(e => {
+                                if (request !== playbackRequest) return;
                                 status.innerHTML = "자동 재생이 차단되었습니다. 재생 버튼을 눌러주세요.";
                             });
                         } else if (currentKey) {
+                            lastPlaySignature = '';
                             playRadio(currentKey);
                         }
                     } else if (action === 'media_pause') {
@@ -814,7 +1010,8 @@
                         updatePlayPauseButtonUI("PAUSED");
                     } else if (action === 'media_stop') {
                         player.pause();
-                        player.src = "";
+                        player.removeAttribute('src');
+                        player.load();
                         status.innerHTML = "재생 정지됨";
                         updateButtonActive("");
                         currentKey = "";
@@ -831,7 +1028,12 @@
 
             status.innerHTML = "명령 전송 중...";
             try {
-                const res = await fetch(`media_action?token=${API_CONFIG.token}&entity_id=${targetPlayer}&action=${action}`);
+                if (action === 'media_play' && currentKey && !lastPlaySignature) {
+                    playRadio(currentKey);
+                    return;
+                }
+                const res = await sendMediaCommand('media_action', { entity_id: targetPlayer, action });
+                if (request !== playbackRequest) return;
                 if (res.ok) {
                     if (action === 'media_stop') {
                         status.innerHTML = "정지 완료";
@@ -860,6 +1062,7 @@
                     status.innerHTML = "명령 실패";
                 }
             } catch (e) {
+                if (request !== playbackRequest) return;
                 status.innerHTML = "통신 오류";
             }
         }
@@ -878,7 +1081,8 @@
             }
             
             try {
-                await fetch(`set_volume?token=${API_CONFIG.token}&entity_id=${targetPlayer}&volume=${val}`);
+                const result = await sendMediaCommand('set_volume', { entity_id: targetPlayer, volume: Number(val) });
+                if (!result.ok) throw new Error('볼륨 조절 요청 실패');
             } catch (e) {
                 console.error("볼륨 조절 실패", e);
             }
@@ -917,20 +1121,24 @@
             }
             
             try {
-                await fetch(`mute_volume?token=${API_CONFIG.token}&entity_id=${targetPlayer}&mute=${isMuted}`);
+                const result = await sendMediaCommand('mute_volume', { entity_id: targetPlayer, mute: isMuted });
+                if (!result.ok) throw new Error('음소거 요청 실패');
             } catch (e) {
                 console.error("음소거 실패", e);
             }
         }
 
         function stopRadio() {
+            ++playbackRequest;
+            clearTimeout(retryTimer);
             if (playerSelect.value === "web") {
                 const bridge = getAndroidBridge();
                 if (bridge && typeof bridge.stopChannel === 'function') {
                     bridge.stopChannel();
                 } else {
                     player.pause();
-                    player.src = "";
+                    player.removeAttribute('src');
+                    player.load();
                 }
                 status.innerHTML = "재생 정지됨";
                 updateButtonActive("");
@@ -954,20 +1162,24 @@
         });
 
         playerSelect.addEventListener('change', () => {
+            ++playbackRequest;
+            clearTimeout(retryTimer);
             const newPlayer = playerSelect.value;
             updateUIByPlayer();
             
             if (lastStartedPlayerId && lastStartedPlayerId !== newPlayer) {
                 const oldPlayer = lastStartedPlayerId;
                 if (oldPlayer !== "web") {
-                    fetch(`media_action?token=${API_CONFIG.token}&entity_id=${oldPlayer}&action=media_stop`);
+                    sendMediaCommand('media_action', { entity_id: oldPlayer, action: 'media_stop' })
+                        .catch(error => console.warn('이전 기기 정지 실패', error));
                 } else {
                     const bridge = getAndroidBridge();
                     if (bridge && typeof bridge.stopChannel === 'function') {
                         bridge.stopChannel();
                     } else {
                         player.pause();
-                        player.src = "";
+                        player.removeAttribute('src');
+                        player.load();
                     }
                 }
             }
@@ -984,11 +1196,21 @@
             }
         };
         player.onerror = () => {
-            if (getAndroidBridge()) return; // 안드로이드 네이티브 환경일 때는 웹뷰 에러 리커버리 무시
-            if (currentKey && playerSelect.value === "web") {
-                status.innerHTML = "연결 오류: 다시 연결하는 중...";
-                setTimeout(() => playRadio(currentKey), 3000);
+            if (!currentKey || !player.hasAttribute('src') || playerSelect.value !== 'web' || getAndroidBridge()) return;
+            clearTimeout(retryTimer);
+            setPlaybackState('READY TO PLAY');
+            if (retryCount >= 3) {
+                status.textContent = '연결 실패. 재생 버튼을 눌러 다시 연결하세요.';
+                return;
             }
+            const request = playbackRequest;
+            const key = currentKey;
+            status.textContent = '연결 오류: 다시 연결하는 중...';
+            retryTimer = setTimeout(() => {
+                if (request !== playbackRequest) return;
+                retryCount++;
+                playRadio(key, true, true);
+            }, 3000);
         };
     </script>
     <script>

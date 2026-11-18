@@ -24,6 +24,7 @@ D:\HA\ADDON\RADIOHA
         index.js
         manifest.json
         package.json
+        package-lock.json
         radio-list.json
         run.sh
         service-worker.js

@@ -1,5 +1,6 @@
 const http = require('http');
-const https = require('https');
+const { randomBytes, randomUUID } = require('crypto');
+const { isIP } = require('net');
 const child_process = require("child_process");
 const fs = require('fs');
 const axios = require('axios');
@@ -7,33 +8,27 @@ const path = require('path');
 
 const port = 3005;
 const OPTIONS_FILE = '/data/options.json';
+const STATION_CHANGES_FILE = path.join(path.dirname(OPTIONS_FILE), 'radio-stations.json');
 let mytoken = 'homeassistant'; // 기본값
-let publicIP = ''; // 공인 IP 저장용
-
-// 공인 IP 갱신 함수
-async function updatePublicIP() {
-    try {
-        const response = await axios.get('https://api.ipify.org?format=json', { timeout: 3000 });
-        publicIP = response.data.ip;
-        console.log(`[Network] 현재 공인 IP: ${publicIP}`);
-    } catch (e) {
-        console.error("[Network] 공인 IP를 가져오지 못했습니다.");
-    }
-}
-updatePublicIP();
-// 1시간마다 공인 IP 갱신
-setInterval(updatePublicIP, 3600000);
+// Keep browser credentials separate from the integration API credential. Related: index.html.
+const localBrowserSession = randomBytes(32).toString('hex');
+const remoteBrowserSession = randomBytes(32).toString('hex');
+const defaultToken = mytoken;
+const sessionCookie = 'radioha_session';
+const ingressPeer = '172.30.32.2';
+const maxBodyBytes = 16 * 1024;
+const maxAuthFailures = 4096;
 
 try {
     if (fs.existsSync(OPTIONS_FILE)) {
         const options = JSON.parse(fs.readFileSync(OPTIONS_FILE, 'utf8'));
-        if (options.token) {
+        if (typeof options.token === 'string' && options.token) {
             mytoken = options.token;
             console.log(`[Config] 토큰이 사용자 정의 값으로 설정되었습니다.`);
         }
     }
-} catch (err) {
-    console.error(`[Config] 옵션 파일 로드 실패:`, err);
+} catch {
+    console.error('[ERROR] Could not read add-on options');
 }
 
 const instance = axios.create({ timeout: 3000 });
@@ -67,13 +62,16 @@ function setSecurityHeaders(resp) {
 }
 
 function validateParam(param, type) {
-    if (!param) return false;
+    if (type === 'volume') {
+        if (typeof param !== 'number' && (typeof param !== 'string' || !/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(param))) return false;
+        return Number.isFinite(Number(param)) && Number(param) >= 0 && Number(param) <= 1;
+    }
+    if (typeof param !== 'string' || !param) return false;
     const patterns = {
         'token': /^[a-zA-Z0-9_-]+$/,
         'key': /^[a-z0-9_]+$/,
         'entity_id': /^media_player\.[a-z0-9_]+$/,
-        'action': /^(media_play|media_pause|media_stop|media_play_pause)$/,
-        'volume': /^0(\.\d+)?|1(\.0)?$/
+        'action': /^(media_play|media_pause|media_stop|media_play_pause)$/
     };
     return patterns[type] ? patterns[type].test(param) : true;
 }
@@ -110,27 +108,23 @@ function isPrivateIP(ip) {
 }
 
 // [보안] IP별 인증 실패 횟수 및 임시 차단(Ban) 상태 관리 객체
-const authFailures = {};
+const authFailures = new Map();
+
+function normalizeIP(value = '') {
+    const ip = value.replace(/^::ffff:/i, '').trim();
+    return isIP(ip) ? ip : '';
+}
+
+function isIngress(req) {
+    return normalizeIP(req.socket.remoteAddress) === ingressPeer && Boolean(req.headers['x-ingress-path']);
+}
 
 function getClientIP(req) {
-    let socketIP = req.socket.remoteAddress;
-    if (socketIP.startsWith('::ffff:')) socketIP = socketIP.split('::ffff:')[1];
-
-    // 직전 연결 소켓이 로컬 사설 대역인지 판별
-    const isSocketLocal = isPrivateIP(socketIP);
-
-    // 로컬망 프록시를 거쳐온 요청일 때에만 X-Forwarded-For 헤더를 신뢰하여 사용
-    if (isSocketLocal && req.headers['x-forwarded-for']) {
-        let forwarded = req.headers['x-forwarded-for'];
-        if (forwarded.includes(',')) forwarded = forwarded.split(',')[0].trim();
-        if (forwarded.startsWith('::ffff:')) forwarded = forwarded.split('::ffff:')[1];
-        return forwarded;
-    }
-    return socketIP;
+    return normalizeIP(req.socket.remoteAddress);
 }
 
 function checkIPBan(clientIP) {
-    const record = authFailures[clientIP];
+    const record = authFailures.get(clientIP);
     if (!record) return { isBanned: false };
 
     const now = Date.now();
@@ -139,20 +133,20 @@ function checkIPBan(clientIP) {
         return { isBanned: true, remaining };
     }
 
-    if (record.bannedUntil && now >= record.bannedUntil) {
-        delete authFailures[clientIP];
+    if (now >= (record.bannedUntil || record.lastFailed + 60000)) {
+        authFailures.delete(clientIP);
     }
     return { isBanned: false };
 }
 
 function recordAuthFailure(clientIP) {
     const now = Date.now();
-    if (!authFailures[clientIP]) {
-        authFailures[clientIP] = { count: 1, lastFailed: now, bannedUntil: 0 };
+    const record = authFailures.get(clientIP);
+    if (!record) {
+        if (authFailures.size >= maxAuthFailures) authFailures.delete(authFailures.keys().next().value);
+        authFailures.set(clientIP, { count: 1, lastFailed: now, bannedUntil: 0 });
         return;
     }
-
-    const record = authFailures[clientIP];
     // 1분 이내의 연속된 실패인 경우 카운트 누적
     if (now - record.lastFailed < 60000) {
         record.count++;
@@ -168,38 +162,80 @@ function recordAuthFailure(clientIP) {
 }
 
 function clearAuthFailures(clientIP) {
-    if (authFailures[clientIP]) {
-        delete authFailures[clientIP];
-    }
+    authFailures.delete(clientIP);
 }
 
 function isLocalRequest(req) {
-    // [보안] Home Assistant Ingress 프록시를 통한 요청인 경우 항상 인증된 로컬 요청으로 신뢰
-    if (req.headers['x-ingress-path']) {
-        return true;
-    }
-
-    const clientIP = getClientIP(req);
-
-    const isPrivate = clientIP === '127.0.0.1' || clientIP === '::1' ||
-        clientIP.startsWith('192.168.') ||
-        clientIP.startsWith('10.') ||
-        clientIP.startsWith('172.16.') || clientIP.startsWith('172.17.') ||
-        clientIP.startsWith('172.18.') || clientIP.startsWith('172.19.') ||
-        clientIP.startsWith('172.2') || clientIP.startsWith('172.3');
-
-    const isPublicMatch = publicIP && clientIP === publicIP;
-
-    return isPrivate || isPublicMatch;
+    if (isIngress(req)) return true;
+    if (req.headers.forwarded || req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.headers['x-ingress-path']) return false;
+    const peer = getClientIP(req);
+    return peer !== ingressPeer && isPrivateIP(peer);
 }
 
-function getRadioData() {
+// Overlay station edits on the packaged catalog. Related: radio-list.json, index.html.
+function readStationChanges() {
     try {
-        return JSON.parse(fs.readFileSync(path.join(__dirname, 'radio-list.json'), 'utf8'));
-    } catch (e) {
-        console.error("데이터 로딩 실패:", e);
-        return {};
+        const changes = JSON.parse(fs.readFileSync(STATION_CHANGES_FILE, 'utf8'));
+        if (!changes || typeof changes !== 'object' || Array.isArray(changes)) throw new Error('Invalid station changes');
+        return changes;
+    } catch (error) {
+        if (error.code === 'ENOENT') return {};
+        throw error;
     }
+}
+
+function getRadioData(changes = readStationChanges()) {
+    const stations = JSON.parse(fs.readFileSync(path.join(__dirname, 'radio-list.json'), 'utf8'));
+    for (const [key, station] of Object.entries(changes)) {
+        if (!validateParam(key, 'key')) continue;
+        if (station === null) delete stations[key];
+        else Object.defineProperty(stations, key, { value: station, enumerable: true, configurable: true, writable: true });
+    }
+    return stations;
+}
+
+function saveStationChanges(changes) {
+    const temporary = STATION_CHANGES_FILE + '.' + randomUUID() + '.tmp';
+    try {
+        fs.writeFileSync(temporary, JSON.stringify(changes, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+        fs.renameSync(temporary, STATION_CHANGES_FILE);
+    } finally {
+        fs.rmSync(temporary, { force: true });
+    }
+}
+
+function updateStation(postData, resp) {
+    const { action, key, name, freq, url } = postData;
+    if (!['add', 'edit', 'delete'].includes(action)) return resp.writeHead(400).end('잘못된 작업입니다.');
+    const changes = readStationChanges();
+    const stations = getRadioData(changes);
+    if (action !== 'add' && (!validateParam(key, 'key') || !Object.hasOwn(stations, key))) {
+        return resp.writeHead(404).end('방송을 찾을 수 없습니다.');
+    }
+    const stationKey = action === 'add' ? 'custom_' + randomUUID().replace(/-/g, '') : key;
+    if (action === 'delete') {
+        if (stationKey.startsWith('custom_')) delete changes[stationKey];
+        else changes[stationKey] = null;
+    } else {
+        const current = stations[stationKey];
+        const originalUrl = typeof current === 'string' ? current : current?.url;
+        const stationName = typeof name === 'string' ? name.trim() : '';
+        let stationUrl = typeof url === 'string' ? url.trim() : '';
+        if (!stationName || stationName.length > 80 || !Number.isFinite(freq) || freq < 0 || freq > 10000 || stationUrl.length > 2048) {
+            return resp.writeHead(400).end('방송명, 주파수 또는 스트림 주소를 확인하세요.');
+        }
+        if (!(action === 'edit' && stationUrl && stationUrl === originalUrl)) {
+            const parsed = URL.parse(stationUrl);
+            if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+                return resp.writeHead(400).end('HTTP 또는 HTTPS 스트림 주소를 입력하세요.');
+            }
+            stationUrl = parsed.href;
+        }
+        changes[stationKey] = { name: stationName, freq, url: stationUrl };
+    }
+    saveStationChanges(changes);
+    resp.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return resp.end(JSON.stringify(getRadioData(changes)));
 }
 
 // KBS 주소 파싱
@@ -273,14 +309,18 @@ function getsbs(ch) {
 }
 
 /**
- * 2. FFmpeg 스트리밍 함수
+ * Stream until the HTTP response closes. Related: Dockerfile, index.html.
  */
 function return_pipe(urls, resp, req, key) {
-    const baseURL = `http://${req.headers.host || 'localhost'}`;
-    const myUrl = new URL(req.url, baseURL);
+    if (resp.destroyed || resp.writableEnded) return;
+    if (typeof urls !== 'string' || !/^https?:\/\//i.test(urls)) {
+        resp.writeHead(502);
+        return resp.end('Stream unavailable');
+    }
+    const myUrl = new URL(req.url, 'http://localhost');
     const urlParams = myUrl.searchParams;
     let bitrateRaw = urlParams.get("atype") || "1";
-    const bitrate = bitrateMap[bitrateRaw] || 128;
+    const bitrate = Object.hasOwn(bitrateMap, bitrateRaw) ? bitrateMap[bitrateRaw] : 128;
     const format = urlParams.get("format") || "wav";
 
     // 채널 맞춤형 헤더 구성 (필요한 경우에만 Referer 추가)
@@ -304,21 +344,33 @@ function return_pipe(urls, resp, req, key) {
 
     console.log(`[Smart Engine] ${key} - ${bitrate}k (Format: ${outFormat})`);
 
-    resp.writeHead(200, {
+    resp.setHeaders(new Map(Object.entries({
         'Content-Type': contentType,
         'Transfer-Encoding': 'chunked',
         'Connection': 'keep-alive',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0'
+    })));
+
+    const xffmpeg = child_process.spawn("ffmpeg", ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
+    resp.once('close', () => {
+        if (xffmpeg.exitCode === null && xffmpeg.signalCode === null) xffmpeg.kill('SIGKILL');
     });
-
-    const xffmpeg = child_process.spawn("ffmpeg", ffmpegArgs, { detached: false });
-    xffmpeg.stdout.pipe(resp);
-
-    const cleanup = () => { if (xffmpeg) xffmpeg.kill(); };
-    req.on("close", cleanup);
-    req.on("end", cleanup);
+    const fail = () => {
+        if (resp.destroyed || resp.writableEnded) return;
+        if (resp.headersSent) return resp.destroy();
+        for (const name of resp.getHeaderNames()) resp.removeHeader(name);
+        resp.writeHead(502);
+        resp.end('Stream unavailable');
+    };
+    xffmpeg.once('error', fail);
+    xffmpeg.stdout.once('error', fail);
+    xffmpeg.stdout.pipe(resp, { end: false });
+    xffmpeg.once('close', code => {
+        if (code !== 0 || !resp.headersSent) fail();
+        else if (!resp.destroyed) resp.end();
+    });
 }
 
 // 호스트의 실제 내부 IP를 가져오는 함수 (Supervisor API 활용)
@@ -354,58 +406,89 @@ async function getHostIP() {
 }
 
 /**
- * 3. HTTP 서버 설정
+ * Bound JSON inputs and contain request failures. Related: index.html, DOC.md.
  */
 const liveServer = http.createServer((req, resp) => {
+    const dispatch = body => handleRequest(req, resp, body).catch(() => {
+        console.error('[ERROR] Request processing failed');
+        if (resp.destroyed || resp.writableEnded) return;
+        if (resp.headersSent) return resp.destroy();
+        resp.writeHead(500);
+        resp.end('Internal Server Error');
+    });
     if (req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => body += chunk);
-        req.on('end', () => {
-            handleRequest(req, resp, body);
+        const chunks = [];
+        let size = 0;
+        let rejected = false;
+        req.on('data', chunk => {
+            if (rejected) return;
+            size += chunk.length;
+            if (size > maxBodyBytes) {
+                rejected = true;
+                chunks.length = 0;
+                resp.writeHead(413, { Connection: 'close' });
+                resp.end('Payload Too Large');
+                return;
+            }
+            chunks.push(chunk);
         });
+        req.on('end', () => {
+            if (!rejected) dispatch(Buffer.concat(chunks).toString('utf8'));
+        });
+        req.on('error', () => resp.destroy());
     } else {
-        handleRequest(req, resp, '');
+        dispatch('');
     }
 });
 
 async function handleRequest(req, resp, body) {
-    const baseURL = `http://${req.headers.host || 'localhost'}`;
-    const myUrl = new URL(req.url, baseURL);
+    const myUrl = new URL(req.url, 'http://localhost');
     const urlParams = myUrl.searchParams;
     const urlPath = myUrl.pathname;
 
     // [보안] 1. IP 추출 및 임시 차단(Ban) 확인
     const clientIP = getClientIP(req);
-    const banInfo = checkIPBan(clientIP);
-    if (banInfo.isBanned) {
-        resp.statusCode = 429;
-        resp.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        return resp.end(`Too Many Requests: 인증 실패 누적으로 인해 임시 차단된 IP입니다. (${banInfo.remaining}초 후 재시도)`);
-    }
+    const denyUnauthorized = () => {
+        const banInfo = checkIPBan(clientIP);
+        if (banInfo.isBanned) {
+            resp.writeHead(429, { 'Retry-After': banInfo.remaining });
+            return resp.end('Too Many Requests');
+        }
+        recordAuthFailure(clientIP);
+        setTimeout(() => {
+            if (resp.destroyed) return;
+            resp.writeHead(403);
+            resp.end('Forbidden');
+        }, 1000);
+    };
 
     const isLocal = isLocalRequest(req);
 
     // POST 바디 파싱
     let postData = {};
     if (req.method === 'POST' && body) {
-        try { postData = JSON.parse(body); } catch (e) { console.error("[API] Body Parse Error"); }
+        try { postData = JSON.parse(body); } catch { postData = null; }
+        if (!postData || typeof postData !== 'object' || Array.isArray(postData)) {
+            resp.writeHead(400);
+            return resp.end('Invalid JSON object');
+        }
     }
 
-    const getParam = (name) => postData[name] || urlParams.get(name);
+    const getParam = name => Object.hasOwn(postData, name) ? postData[name] : urlParams.get(name);
         const token = getParam('token');
-        const isAuthorized = token === mytoken;
+        const isAuthorized = token === mytoken && (isLocal || mytoken !== defaultToken);
+        const ingress = isIngress(req);
+        const session = isLocal ? localBrowserSession : remoteBrowserSession;
+        const hasSession = (req.headers.cookie || '').split(';').some(cookie => cookie.trim() === `${sessionCookie}=${session}`);
+        const browserRead = ['/radio', '/get_radio_list', '/get_players'].includes(urlPath);
+        const browserWrite = req.method === 'POST' && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '') &&
+            (!req.headers['sec-fetch-site'] || req.headers['sec-fetch-site'] === 'same-origin');
 
         // [보안] 2. 인증 가드 통합 적용 (보안 지연 및 실패 기록 연계)
         const protectedPaths = ["/radio", "/get_radio_list", "/get_players", "/play_on_player", "/media_action", "/set_volume", "/mute_volume"];
         if (protectedPaths.includes(urlPath)) {
-            if (!isAuthorized) {
-                recordAuthFailure(clientIP);
-                return setTimeout(() => {
-                    resp.statusCode = 403;
-                    resp.end("Forbidden");
-                }, 1000); // 1초 지연으로 브루트포스 완화
-            }
-            clearAuthFailures(clientIP); // 성공 시 차단 정보 초기화
+            if (!isAuthorized && !((hasSession || ingress) && (browserRead || browserWrite))) return denyUnauthorized();
+            if (isAuthorized) clearAuthFailures(clientIP);
         }
 
         // [보안] 3. 외부망 웹 페이지 요청 시 보안 헤더 적용
@@ -415,13 +498,19 @@ async function handleRequest(req, resp, body) {
 
         // 4. 엔드포인트 라우팅 (Switch-case 구조화)
         switch (urlPath) {
+            case "/manage_stations": {
+                resp.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                if (req.method !== 'POST') return resp.writeHead(405, { Allow: 'POST' }).end('POST required');
+                if (!isLocal || !browserWrite || mytoken === defaultToken) {
+                    return resp.writeHead(403).end('내부망 또는 Ingress에서 사용자 지정 토큰을 설정한 뒤 이용하세요.');
+                }
+                if (!isAuthorized) return denyUnauthorized();
+                clearAuthFailures(clientIP);
+                return updateStation(postData, resp);
+            }
             case "/manifest.json": {
                 try {
-                    let manifest = fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8');
-                    // [보안] 외부 접속 시 홈 화면 아이콘에 토큰을 동적으로 바인딩하여 403 오류 우회
-                    const reqToken = urlParams.get('token');
-                    const startUrl = reqToken ? `./?token=${reqToken}` : './';
-                    manifest = manifest.replace('{{START_URL}}', startUrl);
+                    const manifest = fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8');
 
                     resp.writeHead(200, { 'Content-Type': 'application/json' });
                     resp.end(manifest);
@@ -461,18 +550,17 @@ async function handleRequest(req, resp, body) {
 
             case "/": {
                 // [보안] 외부망 접속 시 웹 UI 진입 권한 검증 (토큰 스캔 봇 차단 및 유출 방지)
-                if (!isLocal && !isAuthorized) {
-                    recordAuthFailure(clientIP);
-                    return setTimeout(() => {
-                        resp.statusCode = 403;
-                        resp.end("Forbidden");
-                    }, 1000); // 1초 지연
-                }
+                if (!isLocal && !isAuthorized && !hasSession) return denyUnauthorized();
                 if (isAuthorized) {
                     clearAuthFailures(clientIP);
                 }
 
-                resp.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                resp.setHeader('Cache-Control', 'no-store');
+                resp.setHeader('Referrer-Policy', 'no-referrer');
+                if (!ingress && !hasSession) {
+                    const secure = req.headers['x-forwarded-proto'] === 'https';
+                    resp.setHeader('Set-Cookie', `${sessionCookie}=${session}; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? '; Secure' : ''}`);
+                }
                 const currentData = getRadioData();
                 const sortedKeys = Object.keys(currentData).sort((a, b) => {
                     const freqA = (typeof currentData[a] === 'object') ? currentData[a].freq : 999;
@@ -483,8 +571,8 @@ async function handleRequest(req, resp, body) {
                 const radioButtons = sortedKeys.map(key => {
                     const info = currentData[key];
                     const name = escapeHtml((typeof info === 'object') ? info.name : key.toUpperCase());
-                    const freq = (typeof info === 'object') ? info.freq + ' MHz' : '';
-                    return `<button class="radio-btn" onclick="playRadio('${escapeHtml(key)}')">
+                    const freq = (typeof info === 'object') ? escapeHtml(String(info.freq)) + ' MHz' : '';
+                    return `<button type="button" class="radio-btn" data-station-key="${escapeHtml(key)}">
                                 <div class="btn-name">${name}</div>
                                 <div class="btn-freq">${freq}</div>
                             </button>`;
@@ -492,12 +580,13 @@ async function handleRequest(req, resp, body) {
 
                 try {
                     let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-                    const configScript = `<script>const API_CONFIG = { token: "${mytoken}", isLocal: ${isLocal} };</script>`;
-                    html = html.replace('</head>', `${configScript}\n</head>`);
-                    html = html.replace(/{{RADIO_BUTTONS}}/g, radioButtons);
-                    html = html.replace(/{{MY_TOKEN}}/g, 'API_CONFIG.token');
+                    const configScript = `<script>const API_CONFIG = { isLocal: ${isLocal} };</script>`;
+                    html = html.replace('</head>', () => `${configScript}\n</head>`);
+                    html = html.replace(/{{RADIO_BUTTONS}}/g, () => radioButtons);
+                    resp.setHeader('Content-Type', 'text/html; charset=utf-8');
                     resp.end(html);
                 } catch (e) {
+                    resp.writeHead(500);
                     resp.end("Internal Server Error");
                 }
                 break;
@@ -510,18 +599,13 @@ async function handleRequest(req, resp, body) {
                     return resp.end("Bad Request");
                 }
                 const currentData = getRadioData();
-                const station = currentData[key];
+                const station = Object.hasOwn(currentData, key) ? currentData[key] : undefined;
                 if (station) {
-                    const myData = (typeof station === 'string') ? station : station.url;
-                    if (myData === "kbs_lib") {
-                        getkbs(key).then(data => data !== "invalid" ? return_pipe(data, resp, req, key) : resp.end("Error"));
-                    } else if (myData === "mbc_lib") {
-                        getmbc(key).then(data => data !== "invalid" ? return_pipe(data, resp, req, key) : resp.end("Error"));
-                    } else if (myData === "sbs_lib") {
-                        getsbs(key).then(data => data !== "invalid" ? return_pipe(data, resp, req, key) : resp.end("Error"));
-                    } else {
-                        return_pipe(myData, resp, req, key);
-                    }
+                    let stream = typeof station === 'string' ? station : station.url;
+                    if (stream === 'kbs_lib') stream = await getkbs(key);
+                    else if (stream === 'mbc_lib') stream = await getmbc(key);
+                    else if (stream === 'sbs_lib') stream = await getsbs(key);
+                    return_pipe(stream, resp, req, key);
                 } else {
                     resp.statusCode = 404;
                     resp.end("Not Found");
@@ -531,7 +615,7 @@ async function handleRequest(req, resp, body) {
 
             case "/get_radio_list": {
                 const currentData = getRadioData();
-                resp.writeHead(200, { 'Content-Type': 'application/json' });
+                resp.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
                 resp.end(JSON.stringify(currentData));
                 break;
             }
@@ -566,13 +650,11 @@ async function handleRequest(req, resp, body) {
                 }
 
                 const hostIp = await getHostIP();
-                let finalHost = hostIp || req.headers.host.split(':')[0];
-                finalHost = `${finalHost}:${port}`;
-
-                const streamUrl = `http://${finalHost}/radio?token=${mytoken}&keys=${keys}&atype=${atype}`;
+                const finalHost = hostIp || new URL(`http://${req.headers.host || 'localhost'}`).hostname;
+                const streamParams = new URLSearchParams({ token: mytoken, keys, atype });
+                const streamUrl = `http://${finalHost}:${port}/radio?${streamParams}`;
                 // [보안] 로그에 민감한 인증 토큰(token) 정보가 노출되는 현상을 예방하기 위해 마스킹 처리
-                const maskedUrl = streamUrl.replace(`token=${mytoken}`, 'token=******');
-                console.log(`[Remote Play] Target: ${entity_id}, URL: ${maskedUrl}`);
+                console.log(`[INFO] Remote play: ${entity_id}, station: ${keys}`);
 
                 hassInstance.post('/services/media_player/play_media', {
                     entity_id: entity_id,
@@ -629,7 +711,7 @@ async function handleRequest(req, resp, body) {
                 const entity_id = getParam('entity_id');
                 const mute = getParam('mute') === 'true' || getParam('mute') === true;
 
-                if (!validateParam(entity_id, 'entity_id')) {
+        if (!validateParam(entity_id, 'entity_id')) {
                     resp.statusCode = 400;
                     return resp.end("Bad Request");
                 }
