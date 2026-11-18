@@ -439,6 +439,16 @@
         let lastStartedPlayerId = "";
         let lastPlaySignature = "";
         let lastPlayRequestAt = 0;
+        // Track confirmed playback and cancel stale retries. Related: index.js.
+        let playbackRequest = 0;
+        let retryTimer;
+        let retryCount = 0;
+
+        const sendMediaCommand = (path, params) => fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(params)
+        });
 
         function isAndroidAppEnv() {
             if (navigator.userAgent.indexOf("KoreaRadioAndroid") !== -1) return true;
@@ -497,7 +507,8 @@
                 return;
             }
             try {
-                const response = await fetch("get_players?token=" + API_CONFIG.token);
+                const response = await fetch('get_players');
+                if (!response.ok) throw new Error('기기 목록 요청 실패');
                 const players = await response.json();
                 players.forEach(p => {
                     const opt = document.createElement("option");
@@ -507,7 +518,7 @@
                 });
                 
                 const lastSavedPlayer = localStorage.getItem('radio_player_id');
-                if (lastSavedPlayer) {
+                if (Array.from(playerSelect.options).some(option => option.value === lastSavedPlayer)) {
                     playerSelect.value = lastSavedPlayer;
                 }
             } catch (e) {
@@ -541,12 +552,6 @@
         }
 
         window.addEventListener('DOMContentLoaded', () => {
-            // PWA manifest 동적 토큰 설정
-            const manifestLink = document.getElementById('pwa-manifest');
-            if (manifestLink && window.API_CONFIG) {
-                manifestLink.setAttribute('href', `manifest.json?token=${API_CONFIG.token}`);
-            }
-
             if (isAndroidAppEnv()) {
                 document.body.classList.add('android-app-env');
             }
@@ -558,31 +563,37 @@
             
             if (lastQuality) quality.value = lastQuality;
             
-            if (lastVolume) {
-                player.volume = parseFloat(lastVolume);
-                if (speakerVolumeInput) speakerVolumeInput.value = lastVolume;
-            } else {
-                player.volume = 0.5;
-                if (speakerVolumeInput) speakerVolumeInput.value = 0.5;
-            }
+            const savedVolume = lastVolume === null ? 0.5 : Number(lastVolume);
+            player.volume = Number.isFinite(savedVolume) && savedVolume >= 0 && savedVolume <= 1 ? savedVolume : 0.5;
+            if (speakerVolumeInput) speakerVolumeInput.value = player.volume;
 
             loadPlayers().then(() => {
                 if (lastKey) {
-                    setTimeout(() => playRadio(lastKey), 500); 
+                    setTimeout(() => {
+                        if (playbackRequest === 0) playRadio(lastKey);
+                    }, 500);
                 }
             });
         });
 
         // 웹 플레이어 재생 상태 감지
-        player.onplay = () => {
+        function setPlaybackState(state) {
             const playState = document.getElementById('play_state');
-            playState.innerText = "NOW PLAYING";
-            playState.classList.add('playing-indicator');
-            updatePlayPauseButtonUI("NOW PLAYING");
+            playState.innerText = state;
+            playState.classList.toggle('playing-indicator', state === 'NOW PLAYING');
+            updatePlayPauseButtonUI(state);
+        }
+
+        player.onplaying = () => {
+            if (playerSelect.value !== 'web' || getAndroidBridge()) return;
+            retryCount = 0;
+            clearTimeout(retryTimer);
+            setPlaybackState('NOW PLAYING');
+            status.textContent = '재생 중 (웹 브라우저)';
         };
         player.onpause = () => {
             const playState = document.getElementById('play_state');
-            if (currentKey) {
+            if (currentKey && player.paused && playerSelect.value === 'web' && player.hasAttribute('src') && !getAndroidBridge()) {
                 playState.innerText = "PAUSED";
                 playState.classList.remove('playing-indicator');
                 updatePlayPauseButtonUI("PAUSED");
@@ -595,14 +606,14 @@
          * @param {boolean} skipScroll - 활성 버튼으로의 자동 스크롤 여부 (기본값: false)
          * 연결 파일: index.js (백엔드 API 호출)
          */
-        function playRadio(key, skipScroll = false) {
+        function playRadio(key, skipScroll = false, isRetry = false) {
             const atype = quality.value;
             const targetPlayer = playerSelect.value;
             const requestSignature = `${key}|${targetPlayer}|${atype}`;
             const now = Date.now();
 
             if (
-                currentKey === key &&
+                !isRetry && currentKey === key &&
                 lastStartedPlayerId === targetPlayer &&
                 lastPlaySignature === requestSignature &&
                 (now - lastPlayRequestAt) < 4000
@@ -613,6 +624,9 @@
 
             lastPlaySignature = requestSignature;
             lastPlayRequestAt = now;
+            const request = ++playbackRequest;
+            clearTimeout(retryTimer);
+            if (!isRetry) retryCount = 0;
             
             // 버튼들 중에서 현재 key에 해당하는 버튼 찾기
             const buttons = document.querySelectorAll('.radio-btn');
@@ -638,9 +652,7 @@
             // 상단 디스플레이 업데이트
             document.getElementById('display_name').innerText = displayName;
             document.getElementById('display_freq').innerText = displayFreq;
-            document.getElementById('play_state').innerText = "NOW PLAYING";
-            document.getElementById('play_state').classList.add('playing-indicator');
-            updatePlayPauseButtonUI("NOW PLAYING");
+            setPlaybackState('LOADING');
 
             const fullStatus = `${displayName} 재생 중`;
             
@@ -649,35 +661,51 @@
                 const bridge = getAndroidBridge();
                 if (isApp) {
                     player.pause();
-                    player.src = "";
+                    player.removeAttribute('src');
                     if (bridge && typeof bridge.playChannel === 'function') {
                         bridge.playChannel(key, displayName, displayFreq + " MHz");
                     } else if (window.Android && typeof window.Android.playChannel === 'function') {
                         window.Android.playChannel(key, displayName, displayFreq + " MHz");
                     } else {
                         console.error("[NativeBridge] 안드로이드 앱 식별자는 있으나 playChannel 브릿지가 누락되었습니다.");
+                        setPlaybackState('READY TO PLAY');
+                        status.textContent = '안드로이드 재생 연결 실패';
+                        return;
                     }
-                    status.innerHTML = displayName + " 재생 중";
+                    setPlaybackState('NOW PLAYING');
+                    status.textContent = fullStatus;
                 } else if (bridge && typeof bridge.playChannel === 'function') {
                     player.pause();
-                    player.src = "";
+                    player.removeAttribute('src');
                     bridge.playChannel(key, displayName, displayFreq + " MHz");
-                    status.innerHTML = fullStatus;
+                    setPlaybackState('NOW PLAYING');
+                    status.textContent = fullStatus;
                 } else {
-                    player.src = "radio?token=" + API_CONFIG.token + "&keys=" + key + "&atype=" + atype;
-                    player.play().catch(() => { status.innerHTML = "자동 재생이 차단되었습니다. 재생 버튼을 눌러주세요."; });
-                    status.innerHTML = fullStatus + " (웹 브라우저)";
+                    status.textContent = displayName + ' 연결 중...';
+                    player.src = 'radio?' + new URLSearchParams({ keys: key, atype });
+                    player.play().catch(error => {
+                        if (request !== playbackRequest || error.name !== 'NotAllowedError') return;
+                        setPlaybackState('READY TO PLAY');
+                        status.textContent = '자동 재생이 차단되었습니다. 재생 버튼을 눌러주세요.';
+                    });
                 }
             } else {
-                player.pause(); 
-                player.src = ""; 
-                status.innerHTML = displayName + " 명령 송신 중...";
-                fetch("play_on_player?token=" + API_CONFIG.token + "&entity_id=" + targetPlayer + "&keys=" + key + "&atype=" + atype)
+                player.pause();
+                player.removeAttribute('src');
+                player.load();
+                status.textContent = displayName + ' 명령 송신 중...';
+                const playerName = playerSelect.selectedOptions[0].text;
+                sendMediaCommand('play_on_player', { entity_id: targetPlayer, keys: key, atype })
                     .then(res => {
-                        if (res.ok) status.innerHTML = fullStatus + " (" + playerSelect.options[playerSelect.selectedIndex].text + ")";
-                        else status.innerHTML = "재행 명령 실패";
-                    }).catch(e => {
-                        status.innerHTML = "통신 오류";
+                        if (!res.ok) throw new Error('재생 명령 실패');
+                        if (request !== playbackRequest) return;
+                        setPlaybackState('NOW PLAYING');
+                        status.textContent = fullStatus + ' (' + playerName + ')';
+                    }).catch(() => {
+                        if (request !== playbackRequest) return;
+                        lastPlaySignature = '';
+                        setPlaybackState('READY TO PLAY');
+                        status.textContent = '재생 명령 실패';
                     });
             }
 
@@ -750,6 +778,8 @@
         }
 
         async function mediaAction(action) {
+            const request = ++playbackRequest;
+            clearTimeout(retryTimer);
             const targetPlayer = playerSelect.value;
             const playState = document.getElementById('play_state');
             const isApp = isAndroidAppEnv();
@@ -778,7 +808,7 @@
                         playState.classList.remove('playing-indicator');
                         updatePlayPauseButtonUI("PAUSED");
                     } else if (action === 'media_stop') {
-                        if (typeof bridge.stopChannel === 'function') {
+                        if (bridge && typeof bridge.stopChannel === 'function') {
                             bridge.stopChannel();
                         }
                         status.innerHTML = "재생 정지됨";
@@ -794,16 +824,19 @@
                 } else {
                     // 일반 웹 브라우저 재생 제어 통합
                     if (action === 'media_play') {
-                        if (player.src) {
+                        if (player.hasAttribute('src') && !player.error) {
                             player.play().then(() => {
+                                if (request !== playbackRequest) return;
                                 status.innerHTML = name ? name + " 재생 중 (웹 브라우저)" : "재생 중 (웹 브라우저)";
                                 playState.innerText = "NOW PLAYING";
                                 playState.classList.add('playing-indicator');
                                 updatePlayPauseButtonUI("NOW PLAYING");
                             }).catch(e => {
+                                if (request !== playbackRequest) return;
                                 status.innerHTML = "자동 재생이 차단되었습니다. 재생 버튼을 눌러주세요.";
                             });
                         } else if (currentKey) {
+                            lastPlaySignature = '';
                             playRadio(currentKey);
                         }
                     } else if (action === 'media_pause') {
@@ -814,7 +847,8 @@
                         updatePlayPauseButtonUI("PAUSED");
                     } else if (action === 'media_stop') {
                         player.pause();
-                        player.src = "";
+                        player.removeAttribute('src');
+                        player.load();
                         status.innerHTML = "재생 정지됨";
                         updateButtonActive("");
                         currentKey = "";
@@ -831,7 +865,12 @@
 
             status.innerHTML = "명령 전송 중...";
             try {
-                const res = await fetch(`media_action?token=${API_CONFIG.token}&entity_id=${targetPlayer}&action=${action}`);
+                if (action === 'media_play' && currentKey && !lastPlaySignature) {
+                    playRadio(currentKey);
+                    return;
+                }
+                const res = await sendMediaCommand('media_action', { entity_id: targetPlayer, action });
+                if (request !== playbackRequest) return;
                 if (res.ok) {
                     if (action === 'media_stop') {
                         status.innerHTML = "정지 완료";
@@ -860,6 +899,7 @@
                     status.innerHTML = "명령 실패";
                 }
             } catch (e) {
+                if (request !== playbackRequest) return;
                 status.innerHTML = "통신 오류";
             }
         }
@@ -878,7 +918,8 @@
             }
             
             try {
-                await fetch(`set_volume?token=${API_CONFIG.token}&entity_id=${targetPlayer}&volume=${val}`);
+                const result = await sendMediaCommand('set_volume', { entity_id: targetPlayer, volume: Number(val) });
+                if (!result.ok) throw new Error('볼륨 조절 요청 실패');
             } catch (e) {
                 console.error("볼륨 조절 실패", e);
             }
@@ -917,20 +958,24 @@
             }
             
             try {
-                await fetch(`mute_volume?token=${API_CONFIG.token}&entity_id=${targetPlayer}&mute=${isMuted}`);
+                const result = await sendMediaCommand('mute_volume', { entity_id: targetPlayer, mute: isMuted });
+                if (!result.ok) throw new Error('음소거 요청 실패');
             } catch (e) {
                 console.error("음소거 실패", e);
             }
         }
 
         function stopRadio() {
+            ++playbackRequest;
+            clearTimeout(retryTimer);
             if (playerSelect.value === "web") {
                 const bridge = getAndroidBridge();
                 if (bridge && typeof bridge.stopChannel === 'function') {
                     bridge.stopChannel();
                 } else {
                     player.pause();
-                    player.src = "";
+                    player.removeAttribute('src');
+                    player.load();
                 }
                 status.innerHTML = "재생 정지됨";
                 updateButtonActive("");
@@ -954,20 +999,24 @@
         });
 
         playerSelect.addEventListener('change', () => {
+            ++playbackRequest;
+            clearTimeout(retryTimer);
             const newPlayer = playerSelect.value;
             updateUIByPlayer();
             
             if (lastStartedPlayerId && lastStartedPlayerId !== newPlayer) {
                 const oldPlayer = lastStartedPlayerId;
                 if (oldPlayer !== "web") {
-                    fetch(`media_action?token=${API_CONFIG.token}&entity_id=${oldPlayer}&action=media_stop`);
+                    sendMediaCommand('media_action', { entity_id: oldPlayer, action: 'media_stop' })
+                        .catch(error => console.warn('이전 기기 정지 실패', error));
                 } else {
                     const bridge = getAndroidBridge();
                     if (bridge && typeof bridge.stopChannel === 'function') {
                         bridge.stopChannel();
                     } else {
                         player.pause();
-                        player.src = "";
+                        player.removeAttribute('src');
+                        player.load();
                     }
                 }
             }
@@ -984,11 +1033,21 @@
             }
         };
         player.onerror = () => {
-            if (getAndroidBridge()) return; // 안드로이드 네이티브 환경일 때는 웹뷰 에러 리커버리 무시
-            if (currentKey && playerSelect.value === "web") {
-                status.innerHTML = "연결 오류: 다시 연결하는 중...";
-                setTimeout(() => playRadio(currentKey), 3000);
+            if (!currentKey || !player.hasAttribute('src') || playerSelect.value !== 'web' || getAndroidBridge()) return;
+            clearTimeout(retryTimer);
+            setPlaybackState('READY TO PLAY');
+            if (retryCount >= 3) {
+                status.textContent = '연결 실패. 재생 버튼을 눌러 다시 연결하세요.';
+                return;
             }
+            const request = playbackRequest;
+            const key = currentKey;
+            status.textContent = '연결 오류: 다시 연결하는 중...';
+            retryTimer = setTimeout(() => {
+                if (request !== playbackRequest) return;
+                retryCount++;
+                playRadio(key, true, true);
+            }, 3000);
         };
     </script>
     <script>

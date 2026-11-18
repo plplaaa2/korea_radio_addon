@@ -1,1 +1,2 @@
 radioha/run.sh text eol=lf
+radioha/index.js whitespace=cr-at-eol
