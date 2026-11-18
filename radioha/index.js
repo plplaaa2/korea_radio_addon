@@ -1,5 +1,5 @@
 const http = require('http');
-const { randomBytes } = require('crypto');
+const { randomBytes, randomUUID } = require('crypto');
 const { isIP } = require('net');
 const child_process = require("child_process");
 const fs = require('fs');
@@ -8,6 +8,7 @@ const path = require('path');
 
 const port = 3005;
 const OPTIONS_FILE = '/data/options.json';
+const STATION_CHANGES_FILE = path.join(path.dirname(OPTIONS_FILE), 'radio-stations.json');
 let mytoken = 'homeassistant'; // 기본값
 // Keep browser credentials separate from the integration API credential. Related: index.html.
 const localBrowserSession = randomBytes(32).toString('hex');
@@ -171,13 +172,70 @@ function isLocalRequest(req) {
     return peer !== ingressPeer && isPrivateIP(peer);
 }
 
-function getRadioData() {
+// Overlay station edits on the packaged catalog. Related: radio-list.json, index.html.
+function readStationChanges() {
     try {
-        return JSON.parse(fs.readFileSync(path.join(__dirname, 'radio-list.json'), 'utf8'));
-    } catch (e) {
-        console.error("데이터 로딩 실패:", e);
-        return {};
+        const changes = JSON.parse(fs.readFileSync(STATION_CHANGES_FILE, 'utf8'));
+        if (!changes || typeof changes !== 'object' || Array.isArray(changes)) throw new Error('Invalid station changes');
+        return changes;
+    } catch (error) {
+        if (error.code === 'ENOENT') return {};
+        throw error;
     }
+}
+
+function getRadioData(changes = readStationChanges()) {
+    const stations = JSON.parse(fs.readFileSync(path.join(__dirname, 'radio-list.json'), 'utf8'));
+    for (const [key, station] of Object.entries(changes)) {
+        if (!validateParam(key, 'key')) continue;
+        if (station === null) delete stations[key];
+        else Object.defineProperty(stations, key, { value: station, enumerable: true, configurable: true, writable: true });
+    }
+    return stations;
+}
+
+function saveStationChanges(changes) {
+    const temporary = STATION_CHANGES_FILE + '.' + randomUUID() + '.tmp';
+    try {
+        fs.writeFileSync(temporary, JSON.stringify(changes, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+        fs.renameSync(temporary, STATION_CHANGES_FILE);
+    } finally {
+        fs.rmSync(temporary, { force: true });
+    }
+}
+
+function updateStation(postData, resp) {
+    const { action, key, name, freq, url } = postData;
+    if (!['add', 'edit', 'delete'].includes(action)) return resp.writeHead(400).end('잘못된 작업입니다.');
+    const changes = readStationChanges();
+    const stations = getRadioData(changes);
+    if (action !== 'add' && (!validateParam(key, 'key') || !Object.hasOwn(stations, key))) {
+        return resp.writeHead(404).end('방송을 찾을 수 없습니다.');
+    }
+    const stationKey = action === 'add' ? 'custom_' + randomUUID().replace(/-/g, '') : key;
+    if (action === 'delete') {
+        if (stationKey.startsWith('custom_')) delete changes[stationKey];
+        else changes[stationKey] = null;
+    } else {
+        const current = stations[stationKey];
+        const originalUrl = typeof current === 'string' ? current : current?.url;
+        const stationName = typeof name === 'string' ? name.trim() : '';
+        let stationUrl = typeof url === 'string' ? url.trim() : '';
+        if (!stationName || stationName.length > 80 || !Number.isFinite(freq) || freq < 0 || freq > 10000 || stationUrl.length > 2048) {
+            return resp.writeHead(400).end('방송명, 주파수 또는 스트림 주소를 확인하세요.');
+        }
+        if (!(action === 'edit' && stationUrl && stationUrl === originalUrl)) {
+            const parsed = URL.parse(stationUrl);
+            if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+                return resp.writeHead(400).end('HTTP 또는 HTTPS 스트림 주소를 입력하세요.');
+            }
+            stationUrl = parsed.href;
+        }
+        changes[stationKey] = { name: stationName, freq, url: stationUrl };
+    }
+    saveStationChanges(changes);
+    resp.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return resp.end(JSON.stringify(getRadioData(changes)));
 }
 
 // KBS 주소 파싱
@@ -440,6 +498,16 @@ async function handleRequest(req, resp, body) {
 
         // 4. 엔드포인트 라우팅 (Switch-case 구조화)
         switch (urlPath) {
+            case "/manage_stations": {
+                resp.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                if (req.method !== 'POST') return resp.writeHead(405, { Allow: 'POST' }).end('POST required');
+                if (!isLocal || !browserWrite || mytoken === defaultToken) {
+                    return resp.writeHead(403).end('내부망 또는 Ingress에서 사용자 지정 토큰을 설정한 뒤 이용하세요.');
+                }
+                if (!isAuthorized) return denyUnauthorized();
+                clearAuthFailures(clientIP);
+                return updateStation(postData, resp);
+            }
             case "/manifest.json": {
                 try {
                     const manifest = fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8');
@@ -503,8 +571,8 @@ async function handleRequest(req, resp, body) {
                 const radioButtons = sortedKeys.map(key => {
                     const info = currentData[key];
                     const name = escapeHtml((typeof info === 'object') ? info.name : key.toUpperCase());
-                    const freq = (typeof info === 'object') ? info.freq + ' MHz' : '';
-                    return `<button class="radio-btn" onclick="playRadio('${escapeHtml(key)}')">
+                    const freq = (typeof info === 'object') ? escapeHtml(String(info.freq)) + ' MHz' : '';
+                    return `<button type="button" class="radio-btn" data-station-key="${escapeHtml(key)}">
                                 <div class="btn-name">${name}</div>
                                 <div class="btn-freq">${freq}</div>
                             </button>`;
@@ -547,7 +615,7 @@ async function handleRequest(req, resp, body) {
 
             case "/get_radio_list": {
                 const currentData = getRadioData();
-                resp.writeHead(200, { 'Content-Type': 'application/json' });
+                resp.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
                 resp.end(JSON.stringify(currentData));
                 break;
             }

@@ -292,6 +292,56 @@
             .volume-group-large { padding: 6px 12px; max-width: 200px; gap: 10px; }
         }
 
+        /* Station editor and icon controls. Related: index.js. */
+        .station-tools {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .station-tools[hidden] { display: none; }
+
+        .station-tools button,
+        .station-dialog button {
+            min-height: 44px;
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            background: var(--card-bg);
+            color: white;
+            cursor: pointer;
+        }
+
+        .station-tools button { width: 44px; display: grid; place-items: center; }
+        .station-tools button:hover, .station-dialog button:hover { border-color: var(--primary); }
+        .station-tools svg { width: 20px; height: 20px; }
+        .station-tools button[data-station-action="delete"] { color: #ff9aa5; }
+
+        .station-dialog {
+            width: min(420px, calc(100% - 24px));
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            background: #172238;
+            color: white;
+            padding: 20px;
+        }
+
+        .station-dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+        .station-dialog h2 { margin: 0 0 14px; font-size: 1.15rem; }
+        .station-dialog form, .station-dialog label, .station-fields { display: grid; gap: 8px; }
+        .station-dialog [hidden] { display: none; }
+        .station-dialog input {
+            width: 100%;
+            padding: 9px 10px;
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            background: #0f172a;
+            color: white;
+        }
+        .station-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+        .station-dialog-actions button { padding: 0 14px; }
+        .station-dialog-actions button:disabled { opacity: 0.5; cursor: default; }
+        .station-dialog-message { margin: 0; color: #ffb3bb; overflow-wrap: anywhere; }
+
         .card-footer-brand {
             font-family: 'Orbitron', sans-serif;
             font-size: 0.7em;
@@ -306,6 +356,17 @@
 </head>
 <body>
     <div class="container">
+        <div class="station-tools" id="station_tools" role="group" aria-label="방송 관리" hidden>
+            <button type="button" data-station-action="add" aria-label="방송 추가" title="방송 추가">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button type="button" data-station-action="edit" aria-label="방송 수정" title="방송 수정">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5 4 4M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11z"/></svg>
+            </button>
+            <button type="button" data-station-action="delete" aria-label="방송 삭제" title="방송 삭제">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg>
+            </button>
+        </div>
         <div class="settings-grid">
             <div class="setting-card">
                 <div class="label">
@@ -329,7 +390,7 @@
             </div>
         </div>
 
-        <div class="grid">
+        <div class="grid" id="station_grid">
             {{RADIO_BUTTONS}}
         </div>
         
@@ -372,6 +433,24 @@
         <div class="card-footer-brand">KOREA RADIO PLAYER</div>
     </section>
 
+    <dialog class="station-dialog" id="station_dialog" aria-labelledby="station_dialog_title">
+        <form id="station_form">
+            <h2 id="station_dialog_title"></h2>
+            <label id="station_picker">대상 방송 <select name="station"></select></label>
+            <div class="station-fields" id="station_fields">
+                <label>방송명 <input name="name" maxlength="80" required></label>
+                <label>주파수 (MHz) <input name="frequency" type="number" min="0" max="10000" step="any" required></label>
+                <label>스트림 주소 <input name="url" type="url" maxlength="2048" placeholder="https://"></label>
+            </div>
+            <label>애드온의 사용자 지정 토큰 <input name="credential" type="password" autocomplete="off" required></label>
+            <p id="station_dialog_message" class="station-dialog-message" role="status"></p>
+            <div class="station-dialog-actions">
+                <button type="button" id="station_cancel">취소</button>
+                <button type="submit" id="station_submit">저장</button>
+            </div>
+        </form>
+    </dialog>
+
     <script>
         const player = document.getElementById('player');
         const status = document.getElementById('status');
@@ -391,6 +470,145 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(params)
+        });
+
+        // Keep station controls and saved selections in sync. Related: index.js.
+        const stationGrid = document.getElementById('station_grid');
+        const stationTools = document.getElementById('station_tools');
+        const stationDialog = document.getElementById('station_dialog');
+        const stationForm = document.getElementById('station_form');
+        const stationPicker = stationForm.elements.station;
+        const stationMessage = document.getElementById('station_dialog_message');
+        const stationSubmit = document.getElementById('station_submit');
+        const stationCancel = document.getElementById('station_cancel');
+        const stationActions = { add: '방송 추가', edit: '방송 수정', delete: '방송 삭제' };
+        let editorAction;
+        let editorStations = {};
+        let editorRequest = 0;
+
+        stationTools.hidden = !API_CONFIG.isLocal;
+        stationGrid.addEventListener('click', event => {
+            const button = event.target.closest('button[data-station-key]');
+            if (button) playRadio(button.dataset.stationKey);
+        });
+
+        function sortedStations(stations) {
+            return Object.entries(stations).sort((a, b) => (a[1]?.freq ?? 999) - (b[1]?.freq ?? 999));
+        }
+
+        function fillStationFields() {
+            if (editorAction !== 'edit') return;
+            const station = editorStations[stationPicker.value];
+            const fields = stationForm.elements;
+            fields.name.value = station?.name ?? stationPicker.value.toUpperCase();
+            fields.frequency.value = station?.freq ?? '';
+            const url = typeof station === 'string' ? station : station?.url ?? '';
+            const builtinStream = ['kbs_lib', 'mbc_lib', 'sbs_lib'].includes(url);
+            fields.url.value = builtinStream ? '' : url;
+            fields.url.required = !builtinStream;
+            fields.url.placeholder = builtinStream ? '비워 두면 기본 스트림 유지' : 'https://';
+        }
+
+        stationTools.addEventListener('click', async event => {
+            const action = event.target.closest('button')?.dataset.stationAction;
+            if (!action || stationDialog.open) return;
+            const request = ++editorRequest;
+            editorAction = action;
+            stationForm.reset();
+            stationPicker.replaceChildren();
+            const editing = action !== 'delete';
+            document.getElementById('station_dialog_title').textContent = stationActions[action];
+            document.getElementById('station_picker').hidden = action === 'add';
+            document.getElementById('station_fields').hidden = !editing;
+            for (const field of ['name', 'frequency', 'url']) stationForm.elements[field].disabled = !editing;
+            stationForm.elements.url.required = action === 'add';
+            stationForm.elements.url.placeholder = 'https://';
+            stationSubmit.textContent = editing ? '저장' : '삭제 확인';
+            stationSubmit.disabled = action !== 'add';
+            stationMessage.textContent = action === 'add' ? '' : '방송 목록을 불러오는 중…';
+            stationDialog.showModal();
+            if (action === 'add') return;
+
+            try {
+                const response = await fetch('get_radio_list', { cache: 'no-store' });
+                if (!response.ok) throw new Error();
+                const stations = await response.json();
+                if (request !== editorRequest || !stationDialog.open) return;
+                editorStations = stations;
+                for (const [key, station] of sortedStations(stations)) {
+                    stationPicker.add(new Option(station?.name ?? key.toUpperCase(), key));
+                }
+                if (Object.hasOwn(stations, currentKey)) stationPicker.value = currentKey;
+                fillStationFields();
+                stationSubmit.disabled = !stationPicker.length;
+                stationMessage.textContent = stationPicker.length ? '' : '관리할 방송이 없습니다.';
+            } catch {
+                if (request === editorRequest && stationDialog.open) stationMessage.textContent = '방송 목록을 불러오지 못했습니다.';
+            }
+        });
+
+        stationPicker.addEventListener('change', fillStationFields);
+        stationCancel.addEventListener('click', () => stationDialog.close());
+        stationDialog.addEventListener('cancel', event => {
+            if (stationCancel.disabled) event.preventDefault();
+        });
+        stationDialog.addEventListener('close', () => { stationForm.elements.credential.value = ''; });
+
+        function renderStations(stations) {
+            const buttons = sortedStations(stations).map(([key, station]) => {
+                const button = document.createElement('button');
+                const name = document.createElement('div');
+                const frequency = document.createElement('div');
+                button.type = 'button';
+                button.className = 'radio-btn';
+                button.dataset.stationKey = key;
+                button.classList.toggle('active', key === currentKey);
+                name.className = 'btn-name';
+                name.textContent = station?.name ?? key.toUpperCase();
+                frequency.className = 'btn-freq';
+                frequency.textContent = station?.freq === undefined ? '' : station.freq + ' MHz';
+                button.append(name, frequency);
+                return button;
+            });
+            stationGrid.replaceChildren(...buttons);
+        }
+
+        stationForm.addEventListener('submit', async event => {
+            event.preventDefault();
+            if (stationSubmit.disabled) return;
+            const fields = stationForm.elements;
+            const key = stationPicker.value;
+            const original = editorStations[key];
+            const action = editorAction;
+            const params = { action, key, token: fields.credential.value };
+            if (action !== 'delete') {
+                params.name = fields.name.value;
+                params.freq = fields.frequency.valueAsNumber;
+                params.url = fields.url.value.trim() || (typeof original === 'string' ? original : original?.url);
+            }
+            stationSubmit.disabled = stationCancel.disabled = true;
+            fields.credential.value = '';
+            stationMessage.textContent = '';
+            try {
+                const response = await sendMediaCommand('manage_stations', params);
+                if (!response.ok) {
+                    const message = await response.text();
+                    throw new Error(message === 'Forbidden' ? '토큰을 확인하세요.' : message);
+                }
+                const stations = await response.json();
+                if (action === 'delete' && currentKey === key) await mediaAction('media_stop');
+                renderStations(stations);
+                if (action === 'edit' && currentKey === key) {
+                    document.getElementById('display_name').textContent = stations[key].name;
+                    document.getElementById('display_freq').textContent = stations[key].freq;
+                }
+                if (action === 'delete' && localStorage.getItem('radio_last_key') === key) localStorage.removeItem('radio_last_key');
+                stationDialog.close();
+            } catch (error) {
+                stationMessage.textContent = error.message || '방송 목록을 저장하지 못했습니다.';
+            } finally {
+                stationSubmit.disabled = stationCancel.disabled = false;
+            }
         });
 
         function isAndroidAppEnv() {
@@ -513,7 +731,9 @@
             loadPlayers().then(() => {
                 if (lastKey) {
                     setTimeout(() => {
-                        if (playbackRequest === 0) playRadio(lastKey);
+                        if (playbackRequest === 0 && Array.from(stationGrid.children).some(button => button.dataset.stationKey === lastKey)) {
+                            playRadio(lastKey);
+                        }
                     }, 500);
                 }
             });
@@ -577,7 +797,7 @@
             let displayFreq = "00.0";
 
             buttons.forEach(btn => {
-                const btnKey = btn.getAttribute('onclick').match(/'([^']+)'/)[1];
+                const btnKey = btn.dataset.stationKey;
                 if (btnKey === key) {
                     btn.classList.add('active');
                     displayName = btn.querySelector('.btn-name').innerText;
@@ -668,13 +888,13 @@
             
             let nextIndex = 0;
             if (currentKey) {
-                const currentIndex = buttons.findIndex(btn => btn.getAttribute('onclick').includes(`'${currentKey}'`));
+                const currentIndex = buttons.findIndex(btn => btn.dataset.stationKey === currentKey);
                 if (currentIndex !== -1) {
                     nextIndex = (currentIndex + 1) % buttons.length;
                 }
             }
             
-            const nextKey = buttons[nextIndex].getAttribute('onclick').match(/'([^']+)'/)[1];
+            const nextKey = buttons[nextIndex].dataset.stationKey;
             playRadio(nextKey, true); // 탐색 버튼 사용 시에는 스크롤하지 않음
         }
 
@@ -684,19 +904,19 @@
             
             let prevIndex = buttons.length - 1;
             if (currentKey) {
-                const currentIndex = buttons.findIndex(btn => btn.getAttribute('onclick').includes(`'${currentKey}'`));
+                const currentIndex = buttons.findIndex(btn => btn.dataset.stationKey === currentKey);
                 if (currentIndex !== -1) {
                     prevIndex = (currentIndex - 1 + buttons.length) % buttons.length;
                 }
             }
             
-            const prevKey = buttons[prevIndex].getAttribute('onclick').match(/'([^']+)'/)[1];
+            const prevKey = buttons[prevIndex].dataset.stationKey;
             playRadio(prevKey, true); // 탐색 버튼 사용 시에는 스크롤하지 않음
         }
 
         function updateButtonActive(key) {
             document.querySelectorAll('.radio-btn').forEach(btn => {
-                const btnKey = btn.getAttribute('onclick').match(/'([^']+)'/)[1];
+                const btnKey = btn.dataset.stationKey;
                 const isActive = btnKey === key;
                 btn.classList.toggle('active', isActive);
                 
@@ -738,7 +958,7 @@
                         } else if (currentKey) {
                             playRadio(currentKey);
                         }
-                        status.innerHTML = name ? name + " 재생 중" : "재생 중";
+                        status.textContent = name ? name + " 재생 중" : "재생 중";
                         playState.innerText = "NOW PLAYING";
                         playState.classList.add('playing-indicator');
                         updatePlayPauseButtonUI("NOW PLAYING");
@@ -770,7 +990,7 @@
                         if (player.hasAttribute('src') && !player.error) {
                             player.play().then(() => {
                                 if (request !== playbackRequest) return;
-                                status.innerHTML = name ? name + " 재생 중 (웹 브라우저)" : "재생 중 (웹 브라우저)";
+                                status.textContent = name ? name + " 재생 중 (웹 브라우저)" : "재생 중 (웹 브라우저)";
                                 playState.innerText = "NOW PLAYING";
                                 playState.classList.add('playing-indicator');
                                 updatePlayPauseButtonUI("NOW PLAYING");
