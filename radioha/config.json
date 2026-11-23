@@ -1,6 +1,6 @@
 {
   "name": "Korea Radio for HA",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "slug": "radioha",
   "hassio_api": true,
   "homeassistant_api": true,

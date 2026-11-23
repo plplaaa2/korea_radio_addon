@@ -1,5 +1,5 @@
 // Cache only public install assets. Related: Dockerfile, index.js, manifest.json.
-const CACHE_NAME = 'radioha-pwa-v4';
+const CACHE_NAME = 'radioha-pwa-v5';
 const ASSETS = [
   './manifest.json',
   './icon.png'
