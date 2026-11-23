@@ -20,9 +20,12 @@
             --glass-border: rgba(255, 255, 255, 0.1);
             --danger: #ff4444;
             --success: #10b981;
+            --remote-edge: calc(15px + env(safe-area-inset-bottom, 0px));
+            --remote-clearance: calc(280px + var(--remote-edge));
         }
 
         * { box-sizing: border-box; }
+        html { scroll-padding-bottom: var(--remote-clearance); }
 
         body { 
             font-family: 'Outfit', sans-serif; 
@@ -30,20 +33,15 @@
             background: radial-gradient(circle at top right, #1e293b, #0f172a); 
             color: white; 
             margin: 0; 
-            display: grid;
-            grid-template-rows: minmax(0, 1fr) auto;
-            justify-items: center;
-            height: 100vh;
-            height: 100dvh;
-            overflow-x: hidden;
+            min-height: 100vh;
         }
 
-        /* Reserve space for the remote and scroll only the station area. Related: index.js. */
+        /* Keep the last station reachable beneath the floating remote. Related: index.js. */
         .container {
-            padding: 30px 20px 18px;
+            padding: 30px 20px var(--remote-clearance);
+            margin-inline: auto;
             width: 100%;
             max-width: 1100px;
-            overflow-y: auto;
         }
 
         .display-panel {
@@ -71,10 +69,16 @@
             font-weight: 600;
             color: #fff;
             text-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+            overflow-wrap: anywhere;
         }
 
         .freq-container {
             display: inline-flex;
+            flex-shrink: 0;
             align-items: baseline;
             gap: 5px;
             font-family: 'Orbitron', sans-serif;
@@ -95,7 +99,10 @@
         }
 
         .media-control-card {
-            margin: 0 0 calc(15px + env(safe-area-inset-bottom, 0px));
+            position: fixed;
+            bottom: var(--remote-edge);
+            left: 50%;
+            transform: translateX(-50%);
             width: calc(100% - 40px);
             max-width: 500px;
             background: rgba(15, 23, 42, 0.85);
@@ -280,7 +287,8 @@
         .playing-indicator { animation: pulse 2s infinite; color: var(--success); font-weight: bold; }
 
         @media (max-width: 600px) {
-            .media-control-card { margin-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); width: calc(100% - 20px); padding: 10px 15px; gap: 8px; }
+            :root { --remote-edge: calc(10px + env(safe-area-inset-bottom, 0px)); --remote-clearance: calc(250px + var(--remote-edge)); }
+            .media-control-card { width: calc(100% - 20px); padding: 10px 15px; gap: 8px; }
             .control-row { gap: clamp(8px, 4vw, 20px); }
             .remote-btn { width: 44px; height: 44px; }
             .remote-btn svg { width: 20px; height: 20px; }
