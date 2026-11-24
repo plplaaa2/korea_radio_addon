@@ -19,9 +19,17 @@ const ingressPeer = '172.30.32.2';
 const maxBodyBytes = 16 * 1024;
 const maxAuthFailures = 4096;
 
+// Bound concurrent FFmpeg processes. Related: config.json, Dockerfile.
+let maxConcurrentStreams = 8;
+let activeStreams = 0;
+
 try {
     if (fs.existsSync(OPTIONS_FILE)) {
         const options = JSON.parse(fs.readFileSync(OPTIONS_FILE, 'utf8'));
+        if (Number.isInteger(options.max_concurrent_streams) &&
+            options.max_concurrent_streams >= 1 && options.max_concurrent_streams <= 64) {
+            maxConcurrentStreams = options.max_concurrent_streams;
+        }
         if (typeof options.token === 'string' && options.token) {
             mytoken = options.token;
             console.log(`[Config] 토큰이 사용자 정의 값으로 설정되었습니다.`);
@@ -317,6 +325,10 @@ function return_pipe(urls, resp, req, key) {
         resp.writeHead(502);
         return resp.end('Stream unavailable');
     }
+    if (activeStreams >= maxConcurrentStreams) {
+        return resp.writeHead(503, { 'Retry-After': '5' }).end('Stream capacity reached');
+    }
+
     const myUrl = new URL(req.url, 'http://localhost');
     const urlParams = myUrl.searchParams;
     let bitrateRaw = urlParams.get("atype") || "1";
@@ -354,6 +366,7 @@ function return_pipe(urls, resp, req, key) {
     })));
 
     const xffmpeg = child_process.spawn("ffmpeg", ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
+    activeStreams++;
     resp.once('close', () => {
         if (xffmpeg.exitCode === null && xffmpeg.signalCode === null) xffmpeg.kill('SIGKILL');
     });
@@ -368,6 +381,7 @@ function return_pipe(urls, resp, req, key) {
     xffmpeg.stdout.once('error', fail);
     xffmpeg.stdout.pipe(resp, { end: false });
     xffmpeg.once('close', code => {
+        activeStreams--;
         if (code !== 0 || !resp.headersSent) fail();
         else if (!resp.destroyed) resp.end();
     });
@@ -386,7 +400,7 @@ async function getHostIP() {
             if (iface.enabled && iface.ipv4 && iface.ipv4.address.length > 0) {
                 for (const addr of iface.ipv4.address) {
                     const ip = addr.split('/')[0];
-                    if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.16.')) {
+                    if (isIP(ip) === 4 && (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.16.'))) {
                         return ip;
                     }
                 }
@@ -396,7 +410,7 @@ async function getHostIP() {
         for (const iface of interfaces) {
             if (iface.enabled && iface.ipv4 && iface.ipv4.address.length > 0) {
                 const ip = iface.ipv4.address[0].split('/')[0];
-                if (!ip.startsWith('127.') && !ip.startsWith('172.30.')) return ip;
+                if (isIP(ip) === 4 && !ip.startsWith('127.') && !ip.startsWith('172.30.')) return ip;
             }
         }
     } catch (e) {
@@ -480,6 +494,11 @@ async function handleRequest(req, resp, body) {
         const ingress = isIngress(req);
         const session = isLocal ? localBrowserSession : remoteBrowserSession;
         const hasSession = (req.headers.cookie || '').split(';').some(cookie => cookie.trim() === `${sessionCookie}=${session}`);
+        // Keep HA player discovery and control behind authenticated Ingress. Related: index.html, config.json.
+        const playerPaths = ['/get_players', '/play_on_player', '/media_action', '/set_volume', '/mute_volume'];
+        if (playerPaths.includes(urlPath) && !ingress) {
+            return resp.writeHead(403).end('Forbidden: Home Assistant Ingress required');
+        }
         const browserRead = ['/radio', '/get_radio_list', '/get_players'].includes(urlPath);
         const browserWrite = req.method === 'POST' && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '') &&
             (!req.headers['sec-fetch-site'] || req.headers['sec-fetch-site'] === 'same-origin');
@@ -580,7 +599,7 @@ async function handleRequest(req, resp, body) {
 
                 try {
                     let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-                    const configScript = `<script>const API_CONFIG = { isLocal: ${isLocal} };</script>`;
+                    const configScript = `<script>const API_CONFIG = { isLocal: ${isLocal}, ingress: ${ingress} };</script>`;
                     html = html.replace('</head>', () => `${configScript}\n</head>`);
                     html = html.replace(/{{RADIO_BUTTONS}}/g, () => radioButtons);
                     resp.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -621,9 +640,6 @@ async function handleRequest(req, resp, body) {
             }
 
             case "/get_players": {
-                if (!isLocal) {
-                    return resp.end(JSON.stringify([]));
-                }
                 hassInstance.get('/states')
                     .then(r => {
                         const players = r.data.filter(s => s.entity_id.startsWith('media_player.'))
@@ -636,10 +652,6 @@ async function handleRequest(req, resp, body) {
             }
 
             case "/play_on_player": {
-                if (!isLocal) {
-                    resp.statusCode = 403;
-                    return resp.end("Forbidden: Local Network Only");
-                }
                 const entity_id = getParam('entity_id');
                 const keys = getParam('keys');
                 const atype = getParam('atype') || '1';
@@ -649,10 +661,13 @@ async function handleRequest(req, resp, body) {
                     return resp.end("Bad Request");
                 }
 
+                // Use only a Supervisor-provided playback address. Related: config.json.
                 const hostIp = await getHostIP();
-                const finalHost = hostIp || new URL(`http://${req.headers.host || 'localhost'}`).hostname;
+                if (!hostIp) {
+                    return resp.writeHead(503).end('Speaker playback address unavailable');
+                }
                 const streamParams = new URLSearchParams({ token: mytoken, keys, atype });
-                const streamUrl = `http://${finalHost}:${port}/radio?${streamParams}`;
+                const streamUrl = `http://${hostIp}:${port}/radio?${streamParams}`;
                 // [보안] 로그에 민감한 인증 토큰(token) 정보가 노출되는 현상을 예방하기 위해 마스킹 처리
                 console.log(`[INFO] Remote play: ${entity_id}, station: ${keys}`);
 
@@ -665,10 +680,6 @@ async function handleRequest(req, resp, body) {
             }
 
             case "/media_action": {
-                if (!isLocal) {
-                    resp.statusCode = 403;
-                    return resp.end("Forbidden: Local Network Only");
-                }
                 const entity_id = getParam('entity_id');
                 const action = getParam('action');
 
@@ -684,10 +695,6 @@ async function handleRequest(req, resp, body) {
             }
 
             case "/set_volume": {
-                if (!isLocal) {
-                    resp.statusCode = 403;
-                    return resp.end("Forbidden: Local Network Only");
-                }
                 const entity_id = getParam('entity_id');
                 const volume = getParam('volume');
 
@@ -704,10 +711,6 @@ async function handleRequest(req, resp, body) {
             }
 
             case "/mute_volume": {
-                if (!isLocal) {
-                    resp.statusCode = 403;
-                    return resp.end("Forbidden: Local Network Only");
-                }
                 const entity_id = getParam('entity_id');
                 const mute = getParam('mute') === 'true' || getParam('mute') === true;
 
