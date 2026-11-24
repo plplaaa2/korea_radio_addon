@@ -23,9 +23,11 @@
   "boot": "auto",
   "audio": true,
   "options": {
+    "max_concurrent_streams": 8,
     "token": "homeassistant"
   },
   "schema": {
+    "max_concurrent_streams": "int(1,64)",
     "token": "str"
   }
 }

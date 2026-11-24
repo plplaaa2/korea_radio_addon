@@ -674,7 +674,8 @@
         }
 
         async function loadPlayers() {
-            if (!API_CONFIG.isLocal) {
+            // Load HA speakers only in Ingress. Related: index.js.
+            if (!API_CONFIG.ingress) {
                 console.log("외부 네트워크 접속: 스피커 목록을 불러오지 않습니다.");
                 updateUIByPlayer();
                 return;
